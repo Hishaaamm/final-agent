@@ -1,0 +1,13 @@
+Leave Policy Document
+
+Casual Leave:
+Employees are allowed 12 casual leaves per year.
+
+Sick Leave:
+Employees can apply for sick leave. Medical proof may be required if leave exceeds two consecutive days.
+
+Leave Approval:
+All leave requests are first marked as pending. The manager or HR team can approve or reject leave requests.
+
+Leave Cancellation:
+Employees can cancel only pending leave requests. Approved or rejected requests cannot be cancelled by employees.

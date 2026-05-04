@@ -1,0 +1,21 @@
+IT Policy Document
+
+IT Support:
+Employees can raise IT tickets for laptop issues, VPN problems, Outlook or email issues, printer issues, network access, and software installation.
+
+Known Outages:
+Before raising a new ticket, the system checks whether the issue is already part of a known outage.
+
+Maintenance:
+If planned maintenance is active for a related system, users are informed before creating a duplicate ticket.
+
+Asset Request:
+Employees can request laptop, monitor, keyboard, mouse, VPN token, or software license.
+
+Asset Approval Flow:
+Asset requests follow this process:
+Employee Request -> Manager Approval -> IT Approval -> Inventory Validation -> Fulfillment.
+
+IT RBAC:
+Employees can create tickets, view their own tickets, and track status.
+IT team can view all tickets, assign tickets, resolve tickets, and access inventory tools.
