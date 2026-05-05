@@ -16,6 +16,7 @@ def create_tables():
     CREATE TABLE IF NOT EXISTS employees (
         emp_id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        email TEXT,
         role TEXT DEFAULT 'employee',
         manager_name TEXT DEFAULT 'Manager'
     )
@@ -48,6 +49,7 @@ def create_tables():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS it_tickets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        emp_id TEXT NOT NULL,
         employee_name TEXT NOT NULL,
         issue_type TEXT NOT NULL,
         priority TEXT NOT NULL,
@@ -114,29 +116,31 @@ def create_tables():
 
 def seed_employees(cursor):
     employees = [
-        ("EMP001", "Rifa", "employee", "Manager"),
-        ("EMP002", "Hisham", "employee", "Manager"),
-        ("EMP003", "Ayesha", "employee", "Manager"),
-        ("EMP004", "Rahul", "employee", "Manager"),
-        ("EMP005", "Sneha", "employee", "Manager"),
-        ("EMP006", "Faizan", "employee", "Manager"),
-        ("EMP007", "Ananya", "employee", "Manager"),
-        ("EMP008", "Kiran", "employee", "Manager"),
-        ("EMP009", "Meera", "employee", "Manager"),
-        ("EMP010", "Arjun", "employee", "Manager"),
+        ("EMP001", "Rifa","hishammohd313@gmail.com",  "employee", "Manager"),
+        ("EMP002", "Hisham", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP003", "Ayesha", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP004", "Rahul", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP005", "Sneha", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP006", "Faizan", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP007", "Ananya", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP008", "Kiran", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP009", "Meera", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP010", "Arjun", "hishammohd313@gmail.com", "employee", "Manager"),
     ]
 
-    for emp_id, name, role, manager in employees:
+    for emp in employees:
+        # Insert employee
         cursor.execute("""
-        INSERT OR IGNORE INTO employees (emp_id, name, role, manager_name)
-        VALUES (?, ?, ?, ?)
-        """, (emp_id, name, role, manager))
+        INSERT OR IGNORE INTO employees (emp_id, name, email, role, manager_name)
+        VALUES (?, ?, ?, ?, ?)
+        """, emp)
 
+        # Insert leave balance
         cursor.execute("""
         INSERT OR IGNORE INTO leave_balances
         (emp_id, casual_total, casual_used, sick_total, sick_used)
         VALUES (?, 12, 0, 6, 0)
-        """, (emp_id,))
+        """, (emp[0],))
 
 
 def seed_default_data(cursor):
@@ -223,9 +227,24 @@ def insert_leave_request(emp_id: str, leave_type: str, date: str, reason: str) -
     VALUES (?, ?, ?, ?, ?, 'pending')
     """, (emp_id, employee["name"], leave_type, date, reason))
 
-    request_id = cursor.lastrowid
-
     conn.commit()
+
+    request_id = cursor.lastrowid   # ✅ NOW it exists
+
+    from power_automate import send_leave_email, MANAGER_EMAIL
+
+    send_leave_email({
+        "event_type": "new_leave_request",
+        "manager_email": MANAGER_EMAIL,
+        "employee_name": employee["name"],
+        "emp_id": emp_id,
+        "leave_type": leave_type,
+        "date": date,
+        "reason": reason,
+        "status": "pending",
+        "request_id": request_id
+    })
+
     conn.close()
 
     return {
@@ -496,19 +515,18 @@ def check_maintenance(issue_type: str) -> Optional[Dict]:
     return dict(row) if row else None
 
 
-def check_duplicate_ticket(employee_name: str, issue_type: str) -> Optional[Dict]:
+def check_duplicate_ticket(emp_id: str, issue_type: str) -> Optional[Dict]:
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
     cursor.execute("""
     SELECT * FROM it_tickets
-    WHERE employee_name = ?
-    AND lower(issue_type) LIKE ?
+    WHERE emp_id = ?
     AND status IN ('open', 'in_progress')
     ORDER BY id DESC
     LIMIT 1
-    """, (employee_name, f"%{issue_type.lower()}%"))
+    """, (emp_id,))
 
     row = cursor.fetchone()
     conn.close()
@@ -516,56 +534,65 @@ def check_duplicate_ticket(employee_name: str, issue_type: str) -> Optional[Dict
     return dict(row) if row else None
 
 
-def insert_it_ticket(employee_name: str, issue_type: str, priority: str, reason: str) -> int:
+def insert_it_ticket(emp_id: str, issue_type: str, priority: str, reason: str):
     conn = get_connection()
     cursor = conn.cursor()
 
+    employee = get_employee(emp_id)
+
     cursor.execute("""
     INSERT INTO it_tickets
-    (employee_name, issue_type, priority, reason, status, assigned_engineer)
-    VALUES (?, ?, ?, ?, 'open', 'Unassigned')
-    """, (employee_name, issue_type, priority, reason))
-
-    ticket_id = cursor.lastrowid
+    (emp_id, employee_name, issue_type, priority, reason, status, assigned_engineer)
+    VALUES (?, ?, ?, ?, ?, 'open', 'Unassigned')
+    """, (emp_id, employee["name"], issue_type, priority, reason))
 
     conn.commit()
+
+    ticket_id = cursor.lastrowid  # 🔥 AFTER COMMIT
+
     conn.close()
 
     return ticket_id
 
 
-def get_it_tickets(employee_name: str, role: str) -> List[Dict]:
+
+def get_it_tickets(emp_id: str, role: str) -> List[Dict]:
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
     if role in ["it", "admin"]:
-        cursor.execute("SELECT * FROM it_tickets ORDER BY id DESC")
+        cursor.execute("""
+        SELECT * FROM it_tickets
+        ORDER BY id DESC
+        """)
     else:
         cursor.execute("""
         SELECT * FROM it_tickets
-        WHERE employee_name = ?
+        WHERE emp_id = ?
         ORDER BY id DESC
-        """, (employee_name,))
+        """, (emp_id,))
 
     rows = cursor.fetchall()
     conn.close()
 
     return [dict(row) for row in rows]
 
-
-def get_it_ticket_status(ticket_id: int, employee_name: str, role: str) -> Optional[Dict]:
+def get_it_ticket_status(ticket_id: int, emp_id: str, role: str) -> Optional[Dict]:
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
     if role in ["it", "admin"]:
-        cursor.execute("SELECT * FROM it_tickets WHERE id = ?", (ticket_id,))
+        cursor.execute("""
+        SELECT * FROM it_tickets
+        WHERE id = ?
+        """, (ticket_id,))
     else:
         cursor.execute("""
         SELECT * FROM it_tickets
-        WHERE id = ? AND employee_name = ?
-        """, (ticket_id, employee_name))
+        WHERE id = ? AND emp_id = ?
+        """, (ticket_id, emp_id))
 
     row = cursor.fetchone()
     conn.close()
@@ -575,7 +602,10 @@ def get_it_ticket_status(ticket_id: int, employee_name: str, role: str) -> Optio
 
 def assign_it_ticket(ticket_id: int, engineer_name: str, role: str) -> Dict:
     if role not in ["it", "admin"]:
-        return {"success": False, "message": "Only IT team or Admin can assign tickets."}
+        return {
+            "success": False,
+            "message": "Access denied. Only IT team or Admin can assign tickets."
+        }
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -583,7 +613,7 @@ def assign_it_ticket(ticket_id: int, engineer_name: str, role: str) -> Dict:
     cursor.execute("""
     UPDATE it_tickets
     SET assigned_engineer = ?, status = 'in_progress'
-    WHERE id = ?
+    WHERE id = ? AND status IN ('open', 'in_progress')
     """, (engineer_name, ticket_id))
 
     updated = cursor.rowcount > 0
@@ -592,14 +622,23 @@ def assign_it_ticket(ticket_id: int, engineer_name: str, role: str) -> Dict:
     conn.close()
 
     if updated:
-        return {"success": True, "message": f"Ticket {ticket_id} assigned to {engineer_name}."}
+        return {
+            "success": True,
+            "message": f"Ticket {ticket_id} assigned to {engineer_name}."
+        }
 
-    return {"success": False, "message": "Ticket not found."}
+    return {
+        "success": False,
+        "message": "Ticket not found or already resolved."
+    }
 
 
 def resolve_it_ticket(ticket_id: int, role: str) -> Dict:
     if role not in ["it", "admin"]:
-        return {"success": False, "message": "Only IT team or Admin can resolve tickets."}
+        return {
+            "success": False,
+            "message": "Access denied. Only IT team or Admin can resolve tickets."
+        }
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -607,7 +646,7 @@ def resolve_it_ticket(ticket_id: int, role: str) -> Dict:
     cursor.execute("""
     UPDATE it_tickets
     SET status = 'resolved'
-    WHERE id = ?
+    WHERE id = ? AND status != 'resolved'
     """, (ticket_id,))
 
     updated = cursor.rowcount > 0
@@ -616,9 +655,15 @@ def resolve_it_ticket(ticket_id: int, role: str) -> Dict:
     conn.close()
 
     if updated:
-        return {"success": True, "message": f"Ticket {ticket_id} resolved."}
+        return {
+            "success": True,
+            "message": f"Ticket {ticket_id} resolved successfully."
+        }
 
-    return {"success": False, "message": "Ticket not found."}
+    return {
+        "success": False,
+        "message": "Ticket not found or already resolved."
+    }
 
 
 # ---------------- ASSET ----------------
@@ -786,3 +831,53 @@ def load_memory(session_id: str, limit: int = 10) -> List[Dict]:
     messages.reverse()
 
     return messages
+def add_employee(emp_id: str, name: str, email: str, role: str = "employee", manager_name: str = "Manager") -> Dict:
+    emp_id = emp_id.upper().strip()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT emp_id FROM employees WHERE emp_id = ?", (emp_id,))
+    if cursor.fetchone():
+        conn.close()
+        return {"success": False, "message": f"Employee {emp_id} already exists."}
+
+    cursor.execute("""
+    INSERT INTO employees (emp_id, name, email, role, manager_name)
+    VALUES (?, ?, ?, ?, ?)
+    """, (emp_id, name, email, role, manager_name))
+
+    cursor.execute("""
+    INSERT OR IGNORE INTO leave_balances
+    (emp_id, casual_total, casual_used, sick_total, sick_used)
+    VALUES (?, 12, 0, 6, 0)
+    """, (emp_id,))
+
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "message": f"Employee {name} ({emp_id}) added successfully."}
+
+
+def delete_employee(emp_id: str) -> Dict:
+    emp_id = emp_id.upper().strip()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT name FROM employees WHERE emp_id = ?", (emp_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        return {"success": False, "message": f"No employee found with ID {emp_id}."}
+
+    cursor.execute("DELETE FROM leave_balances WHERE emp_id = ?", (emp_id,))
+    cursor.execute("DELETE FROM leave_requests WHERE emp_id = ?", (emp_id,))
+    cursor.execute("DELETE FROM it_tickets WHERE emp_id = ?", (emp_id,))
+    cursor.execute("DELETE FROM employees WHERE emp_id = ?", (emp_id,))
+
+    conn.commit()
+    conn.close()
+
+    return {"success": True, "message": f"Employee {emp_id} deleted successfully."}

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-
+from database import check_duplicate_ticket
 from models import AgentState, RouterOutput, DetailExtraction,LeaveTypeValidation
 from rag import answer_policy_question
 
@@ -59,10 +59,9 @@ def active_leave_history_to_text(chat_history):
             break
 
         if role == "user" and (
-            "apply leave" in content
-            or "apply for leave" in content
-            or "take leave" in content
-            or "want leave" in content
+            ("apply" in content and "leave" in content)
+            or ("take" in content and "leave" in content)
+            or ("want" in content and "leave" in content)
             or "leave request" in content
         ):
             start_index = i
@@ -80,88 +79,209 @@ def active_leave_history_to_text(chat_history):
 # ---------------- ROUTER ----------------
 
 def router_node(state: AgentState) -> dict:
-    import re
-
     current_text = state.user_input.strip().lower()
-
+    if state.missing_fields:
+        return {"intent": state.intent}
     full_history = "\n".join(
-        [m.get("content", "").lower() for m in state.chat_history[-8:]]
+        [f"{m.get('role', '')}: {m.get('content', '')}" for m in state.chat_history[-8:]]
     )
-
-    recent = full_history[-300:]  # shorter = better
-
-    # ---------------- SMALL TALK ----------------
-    if current_text in ["hi", "hello", "hey", "hai"]:
-        return {"intent": "small_talk"}
-
-    if current_text in ["thanks", "thank you", "ok", "okay", "bye"]:
-        return {"intent": "small_talk"}
-
-    # ---------------- FAST INTENTS (CURRENT MESSAGE FIRST) ----------------
-    # ORDER MATTERS
-    if "pending leave" in current_text or "pending requests" in current_text or "show all leave" in current_text or "all leave request" in current_text:
-        return {"intent": "pending_leaves"}
-
-    if "approve" in current_text and "leave" in current_text:
-        return {"intent": "approve_leave"}
-
-    if "reject" in current_text and "leave" in current_text:
-        return {"intent": "reject_leave"}
     
-    if "leave summary" in current_text or "team leave summary" in current_text or "leave report" in current_text:
-        return {"intent": "leave_summary"}
+    if re.search(r"\bEMP\d{3}\b", state.user_input, re.IGNORECASE):
+        last_assistant_msg = ""
 
-    # APPLY LEAVE MUST COME FIRST
-    if "apply leave" in current_text or "apply for leave" in current_text or "take leave" in current_text or ("apply" in current_text and "leave" in current_text):
-        return {"intent": "apply_leave"}
+        for msg in reversed(state.chat_history):
+            if msg.get("role") == "assistant":
+                last_assistant_msg = msg.get("content", "").lower()
+                break
 
-    if "leave balance" in current_text or "balance" in current_text:
-        return {"intent": "leave_balance"}
+        if "leave balance" in last_assistant_msg:
+            return {"intent": "leave_balance"}
 
-    if "leave request status" in current_text or "leave status" in current_text or "request status" in current_text or "check status" in current_text:
-        return {"intent": "leave_status"}
+        if "leave request status" in last_assistant_msg or "status of my leave" in last_assistant_msg:
+            return {"intent": "leave_status"}
 
-    if "leave history" in current_text or "applied leaves" in current_text or "view leave" in current_text:
-        return {"intent": "view_leave"}
+        if "leave history" in last_assistant_msg:
+            return {"intent": "view_leave"}
 
-    if "pending leave" in current_text or "pending approvals" in current_text:
-        return {"intent": "pending_leaves"}
+        if "view your it tickets" in last_assistant_msg:
+            return {"intent": "view_it_tickets"}
 
-    # ---------------- EMP ID FOLLOW-UP ----------------
-    if re.search(r"\bEMP\d{3}\b", current_text, re.IGNORECASE):
-        last_message = state.chat_history[-1]["content"].lower() if state.chat_history else ""
-
-    if "balance" in last_message:
-        return {"intent": "leave_balance"}
-
-    if "status" in last_message:
-        return {"intent": "leave_status"}
-
-    if "history" in last_message or "applied leaves" in last_message:
-        return {"intent": "view_leave"}
-
-    return {"intent": "apply_leave"}
-
-    # ---------------- LLM FALLBACK ----------------
+        if "it ticket status" in last_assistant_msg:
+            return {"intent": "it_ticket_status"}
+            
     prompt = ChatPromptTemplate.from_template("""
-                                              
-You are the router for an Enterprise HR + IT Assistant.
+You are the intent router for an Enterprise HR + IT Assistant.
 
-Classify the user's message into exactly ONE intent.
+Your job is to classify the CURRENT user message into exactly ONE intent.
 
 Available intents:
-small_talk, rag, apply_leave, view_leave, cancel_leave, leave_status,
-leave_balance, approve_leave, reject_leave, pending_leaves, employee_details,
-raise_it_ticket, view_it_tickets, it_ticket_status, assign_it_ticket,
-resolve_it_ticket, request_asset, asset_status, approve_asset, reject_asset, unknown.
+small_talk
+rag
+apply_leave
+view_leave
+cancel_leave
+leave_status
+leave_balance
+approve_leave
+reject_leave
+pending_leaves
+employee_details
+raise_it_ticket
+view_it_tickets
+it_ticket_status
+assign_it_ticket
+resolve_it_ticket
+request_asset
+asset_status
+approve_asset
+reject_asset
+add_employee
+delete_employee
+unknown
+
+IMPORTANT RULES:
+
+1. Current message has highest priority.
+Do not blindly follow old history.
+
+2. Apply leave:
+Use apply_leave when user wants to apply/take/request leave.
+Examples:
+- I want to apply leave
+- apply sick leave
+- I want casual leave tomorrow
+- EMP001 after assistant asked for missing leave application details
+- sick leave on 2026-05-10 because fever
+
+3. Leave balance:
+Use leave_balance when user asks about balance/remaining leaves.
+Examples:
+- check leave balance
+- how many leaves are left
+- pending leave balance
+- EMP001 after assistant asked employee ID for leave balance
+
+4. Leave status:
+Use leave_status when user asks status/latest request/request approval state.
+Examples:
+- check my leave status
+- check my leave request
+- status of my leave
+- is my leave approved
+- EMP001 after assistant asked employee ID for leave status
+
+5. View leave:
+Use view_leave when user asks history/list of previous leave records.
+Examples:
+- show my leave history
+- view my applied leaves
+- list leaves of EMP003
+
+6. Pending leaves:
+Use pending_leaves when manager/hr/admin asks to see all pending requests.
+Examples:
+- show pending leave requests
+- show all leave requests
+- pending approvals
+
+7. Approve/reject leave:
+Use approve_leave or reject_leave when manager/admin approves or rejects.
+Examples:
+- approve leave 1
+- approve leave request 1
+- reject leave 2
+
+8. Employee details:
+Use employee_details when HR/Admin asks employee info/list employees.
+
+9. RAG:
+Use rag for policy questions.
+Examples:
+- what is notice period?
+- explain leave policy
+- what is WFH policy?
+
+IMPORTANT:
+keyboard, mouse, monitor, vpn token, software license are asset requests, not IT support tickets.
+
+If user says "I need keyboard" classify as request_asset.
+If user says "keyboard not working" classify as raise_it_ticket only if they report a problem.
+
+10. IT tickets:
+
+raise_it_ticket:
+Use this intent when the user wants to raise/create/open/log a support ticket OR reports a problem.
+
+This is VERY IMPORTANT:
+If the user says:
+- I want to raise a ticket
+- raise a ticket
+- create ticket
+- open ticket
+- new ticket
+- support request
+→ ALWAYS classify as raise_it_ticket
+
+Even if no issue details are provided yet.
+
+Also use raise_it_ticket if user describes a problem like:
+- my laptop is not working
+- VPN not connecting
+- printer issue
+- network problem
+- email/outlook issue
+- software installation issue
+
+view_it_tickets:
+Use view_it_tickets when user asks to show/list/view IT tickets.
+Examples:
+- show my IT tickets
+- show all IT tickets
+- list tickets
+
+it_ticket_status:
+Use it_ticket_status when user asks ticket status.
+Examples:
+- status of ticket 1
+- show status of my IT tickets
+
+assign_it_ticket:
+Use assign_it_ticket when IT/Admin assigns ticket to engineer.
+
+resolve_it_ticket:
+Use resolve_it_ticket when IT/Admin resolves/closes ticket.
+                                              
+11. Asset:
+request_asset: request laptop/monitor/keyboard/mouse/vpn token/software license
+asset_status: asset request status
+approve_asset: approve asset request
+reject_asset: reject asset request
+
+12. small_talk:
+Greetings or casual messages.
+Examples: hi, hello, thanks, okay, bye, yey
+
+13.Employee management:
+add_employee: HR/Admin adds a new employee.
+Examples:
+- add new employee
+- create employee EMP011 named Zoya email zoya@test.com role employee
+
+delete_employee: HR/Admin deletes/removes employee.
+Examples:
+- delete employee EMP011
+- remove employee EMP005
+
+14 unknown:
+Anything outside HR/IT/asset/policy.
 
 Recent conversation:
 {history}
 
-Current message:
+Current user message:
 {user_input}
 """)
-
+    
     structured_llm = llm.with_structured_output(RouterOutput)
     chain = prompt | structured_llm
 
@@ -178,60 +298,91 @@ def extract_details_node(state: AgentState) -> dict:
     prompt = ChatPromptTemplate.from_template("""
 You extract structured details for an Enterprise HR + IT Assistant.
 
-Use reasoning, not keyword matching.
+Your job is ONLY to extract values. Do not answer the user.
 
 GENERAL RULES:
 - Current user message has highest priority.
-- Use recent conversation only for unfinished follow-up tasks.
-- If user corrects a previous value, use the correction.
-- Do not reuse old completed request details.
-- For leave actions, employee ID must come from the current message only.
-- If current message does not contain employee ID like EMP001, emp_id must be null.
+- Use recent conversation ONLY when the current task is unfinished.
+- If the user corrects a previous value, use the latest correction.
+- Do not reuse details from completed tasks.
+- If recent conversation contains LEAVE_FLOW_COMPLETED, ignore leave details before that marker.
+- Return null only when the value is not available in current message or unfinished recent conversation.
 
 LEAVE RULES:
 - Extract emp_id, leave_type, date, reason.
-- leave_type must be either sick, casual, or null.
-- If user explicitly corrects leave type, use the corrected leave type.
-- If user asks for sick leave but the reason is clearly non-medical, set leave_type = null.
-- If user asks for casual leave but the reason is clearly medical, set leave_type = null.
-- If leave type is unclear or conflicting, set leave_type = null.
-- Keep the reason as the user’s actual reason.
+- emp_id must look like EMP001, EMP002, EMP003, etc.
+- leave_type must be sick, casual, or null.
+- date should be extracted in YYYY-MM-DD format when present.
+- reason should be the actual reason text.
+- If current message only provides emp_id, keep leave_type/date/reason from recent unfinished leave conversation.
+- If current message only provides leave_type/date/reason, keep emp_id from recent unfinished leave conversation.
+- If user gives all details in one message, extract all details.
+- If any detail is missing, return null for only that missing field.
+- Do not invent missing values.
+- Do not clear previous unfinished values unless user starts a completely new leave request.
 
--If recent conversation contains LEAVE_FLOW_COMPLETED, do not reuse any old leave details from before that marker.
-A new leave request must start fresh.
-                                              
-Examples:
-User: "I want sick leave tomorrow because I have fever"
+LEAVE TYPE VALIDATION:
+- Sick leave is for medical reasons: fever, headache, illness, doctor visit, hospital, injury, recovery.
+- Casual leave is for non-medical reasons: family function, marriage, travel, personal work, ceremony, event.
+- If leave type and reason conflict, set leave_type = null and keep the reason.
+- Handle typos:
+  - sixk, sik, sic = sick
+  - causual, casul = casual
+
+LEAVE EXAMPLES:
+User: "I want sick leave on 2026-05-07 because of fever"
+emp_id = null
 leave_type = sick
-reason = "I have fever"
+date = 2026-05-07
+reason = fever
 
-User: "I want sick leave tomorrow because I have school function"
-leave_type = null
-reason = "I have school function"
+Recent: user asked sick leave on 2026-05-07 because fever
+Current: "EMP001"
+emp_id = EMP001
+leave_type = sick
+date = 2026-05-07
+reason = fever
 
-User: "casual leave"
-leave_type = casual
-
-User: "EMP003"
+Recent: user gave EMP003
+Current: "casual leave on 2026-05-10 due to family function"
 emp_id = EMP003
-                                              
-- If user previously gave a reason/date in the current unfinished leave flow, keep it unless user replaces it.
+leave_type = casual
+date = 2026-05-10
+reason = family function
 
+User: "I want sick leave on 2026-05-10 because of family function"
+emp_id = null
+leave_type = null
+date = 2026-05-10
+reason = family function
 
 IT RULES:
 - Extract issue_type, priority, reason.
 - issue_type examples: laptop, vpn, outlook, email, printer, network, software installation.
-- priority: low, medium, high, urgent.
+- priority must be low, medium, high, urgent, or null.
+- If priority is missing, return null.
 
 ASSET RULES:
-- Extract asset_type: laptop, monitor, keyboard, mouse, vpn token, software license.
+- Extract asset_type.
+- Valid asset_type: laptop, monitor, keyboard, mouse, vpn token, software license.
 
-ADMIN RULES:
-- Extract request_id from messages like approve leave request 1, ticket 2, asset request 3.
+ADMIN RULES and HR RULES:
+- Extract request_id from messages like approve leave request 1, reject leave 2, ticket 3, asset request 4.
 - Extract engineer_name from messages like assign ticket 1 to Rahul.
 
-Return:
+EMPLOYEE MANAGEMENT RULES:
+- For add_employee extract emp_id, new_emp_name, new_emp_email, new_emp_role.
+- Role can be employee, hr, manager, it, admin.
+- For delete_employee extract emp_id.
+                                              
+Return exactly:
 emp_id, date, reason, leave_type, request_id, issue_type, priority, asset_type, engineer_name.
+
+Recent unfinished conversation:
+{history}
+
+Current message:
+{user_input}
 
 Recent conversation:
 {history}
@@ -243,26 +394,36 @@ Current message:
     chain = prompt | llm.with_structured_output(DetailExtraction)
 
     result = chain.invoke({
-        "history": active_leave_history_to_text(state.chat_history),
+        "history": "\n".join(
+            f"{m['role']}: {m['content']}"
+            for m in state.chat_history[-8:]
+        ),
         "user_input": state.user_input
     })
 
     # start with previous state (IMPORTANT)
     data = {
-        "emp_id": state.emp_id,
-        "date": state.date,
-        "reason": state.reason,
-        "leave_type": state.leave_type,
-        "request_id": state.request_id,
-        "issue_type": state.issue_type,
-        "priority": state.priority,
-        "asset_type": state.asset_type,
-        "engineer_name": state.engineer_name,
+        "emp_id": None,
+        "date": result.date,
+        "reason": result.reason,
+        "leave_type": result.leave_type,
+        "request_id": result.request_id,
+        "issue_type": result.issue_type,
+        "priority": result.priority,
+        "asset_type": result.asset_type,
+        "engineer_name": result.engineer_name,
     }
+       # -------- UPDATE ONLY NEW VALUES --------
 
-    # -------- UPDATE ONLY NEW VALUES --------
-    if result.emp_id:
-        data["emp_id"] = result.emp_id
+    # IMPORTANT:
+    # Do NOT take emp_id from LLM result because it may come from old chat history.
+    # emp_id must come only from the CURRENT user message.
+    emp_match = re.search(r"\bEMP\d{3}\b", state.user_input, re.IGNORECASE)
+
+    if emp_match:
+        data["emp_id"] = emp_match.group(0).upper()
+    else:
+        data["emp_id"] = None
 
     if result.date:
         data["date"] = result.date
@@ -288,30 +449,22 @@ Current message:
     if result.engineer_name:
         data["engineer_name"] = result.engineer_name
 
-    # -------- FALLBACK EXTRACTION (CRITICAL) --------
+    # -------- FALLBACK EXTRACTION --------
     text = state.user_input.lower()
 
-    # leave type
     if "casual" in text:
         data["leave_type"] = "casual"
     elif "sick" in text:
         data["leave_type"] = "sick"
 
-    # date
     date_match = re.search(r"\d{4}-\d{2}-\d{2}", text)
     if date_match:
         data["date"] = date_match.group(0)
 
-    # reason
     if "because" in text or "due to" in text:
         parts = re.split(r"because|due to", text)
         if len(parts) > 1:
             data["reason"] = parts[-1].strip()
-
-    # EMP ID (ONLY FROM CURRENT MESSAGE — IMPORTANT)
-    emp_match = re.search(r"\bEMP\d{3}\b", state.user_input, re.IGNORECASE)
-    if emp_match:
-        data["emp_id"] = emp_match.group(0).upper()
 
     # -------- NORMALIZE --------
     if data["emp_id"]:
@@ -445,7 +598,16 @@ def validate_leave_node(state: AgentState) -> dict:
             "missing_fields": missing,
             "response": f"Please provide: {', '.join(missing)}."
         }
+    from holidays import is_invalid_leave_date
+    # Check holiday / weekend
+    if state.date:
+        invalid, message = is_invalid_leave_date(state.date)
 
+        if invalid:
+            return {
+                "missing_fields": ["valid working day"],
+                "response": f"Cannot apply leave: {message}"
+            }
     # LLM validation must be created BEFORE using validation
     validation = validate_leave_type_with_llm(
         leave_type=state.leave_type,
@@ -614,19 +776,23 @@ def leave_status_node(state: AgentState) -> dict:
     from database import get_leave_history
 
     emp_id = state.emp_id
-    request_id = state.request_id
 
-    # Extract EMP ID directly from current user message
     emp_match = re.search(r"\bEMP\d{3}\b", state.user_input, re.IGNORECASE)
     if emp_match:
         emp_id = emp_match.group(0).upper()
 
-    # Extract request ID if user says request 3 / ID 3
-    id_match = re.search(r"\b(?:request|id)\s*(\d+)\b", state.user_input, re.IGNORECASE)
+    request_id = None
+    id_match = re.search(
+        r"\b(?:leave\s*request\s*id|request\s*id|id)\s*[:#-]?\s*(\d+)\b",
+        state.user_input,
+        re.IGNORECASE
+    )
     if id_match:
         request_id = int(id_match.group(1))
 
-    # If specific request ID is given
+    if not emp_id and state.role not in ["manager", "hr", "admin"]:
+        return {"response": "Please provide your employee ID. Example: EMP001"}
+
     if request_id:
         result = check_leave_status_with_role(
             request_id=request_id,
@@ -651,29 +817,23 @@ def leave_status_node(state: AgentState) -> dict:
             )
         }
 
-    # If EMP ID is given, show latest leave request
-    if emp_id:
-        history = get_leave_history(emp_id)
+    history = get_leave_history(emp_id)
 
-        if not history:
-            return {"response": f"No leave requests found for {emp_id}."}
+    if not history:
+        return {"response": f"No leave requests found for {emp_id}."}
 
-        latest = history[0]
-
-        return {
-            "response": (
-                f"Latest Leave Request Status:\n"
-                f"Request ID: {latest['id']}\n"
-                f"Employee: {latest['employee_name']} ({latest['emp_id']})\n"
-                f"Leave Type: {latest['leave_type']}\n"
-                f"Date: {latest['date']}\n"
-                f"Reason: {latest['reason']}\n"
-                f"Status: {latest['status']}"
-            )
-        }
+    latest = history[0]
 
     return {
-        "response": "Please provide your employee ID. Example: EMP001"
+        "response": (
+            f"Latest Leave Request Status:\n"
+            f"Request ID: {latest['id']}\n"
+            f"Employee: {latest['employee_name']} ({latest['emp_id']})\n"
+            f"Leave Type: {latest['leave_type']}\n"
+            f"Date: {latest['date']}\n"
+            f"Reason: {latest['reason']}\n"
+            f"Status: {latest['status']}"
+        )
     }
 
 def cancel_leave_node(state: AgentState) -> dict:
@@ -732,39 +892,140 @@ def reject_leave_node(state: AgentState) -> dict:
 # ---------------- IT NODES ----------------
 
 def validate_it_ticket_node(state: AgentState) -> dict:
+    prompt = ChatPromptTemplate.from_template("""
+You are an IT support assistant.
+
+Check which details are missing to raise an IT ticket.
+
+Required details:
+1. employee ID like EMP001
+2. issue type: laptop, vpn, outlook, email, printer, network, software installation
+3. issue description / reason
+4. priority: low, medium, high, urgent
+
+Rules:
+- If priority is missing, default it to medium.
+- If issue description is already clear, do not ask again.
+- Ask only for missing fields.
+- Keep response short and natural.
+
+IMPORTANT:
+- If user asks for keyboard, mouse, monitor, VPN token, or software license → this is NOT an IT ticket.
+- It is an ASSET REQUEST. Ask them to request asset instead.
+
+Current extracted details:
+Employee ID: {emp_id}
+Issue type: {issue_type}
+Priority: {priority}
+Reason: {reason}
+
+User message:
+{user_input}
+""")
+
     missing = []
+
+    # ---------- ASSET DETECTION ----------
+    text = (state.user_input or "").lower()
+    asset_keywords = ["keyboard", "mouse", "monitor", "vpn token", "software license"]
+
+    if any(asset in text for asset in asset_keywords):
+        return {
+            "missing_fields": [],
+            "response": (
+                "It looks like you are requesting an asset.\n"
+                "Please say 'request keyboard' or 'request asset' to proceed."
+            )
+        }
+
+    # ---------- ACTIVE TICKET CHECK ----------
+    if state.emp_id:
+        duplicate = check_duplicate_ticket(state.emp_id, state.issue_type or "")
+        if duplicate:
+            return {
+                "missing_fields": [],
+                "response": (
+                    f"You already have an active IT ticket.\n"
+                    f"Ticket ID: {duplicate['id']}\n"
+                    f"Issue: {duplicate['issue_type']}\n"
+                    f"Status: {duplicate['status']}\n\n"
+                    f"Please wait until it is resolved before raising a new one."
+                )
+            }
+
+    # ---------- VALIDATION ----------
+    valid_issues = ["laptop", "vpn", "outlook", "email", "printer", "network", "software installation"]
+
+    if not state.emp_id:
+        missing.append("employee ID")
 
     if not state.issue_type:
         missing.append("issue type")
-
-    if not state.priority:
-        missing.append("priority")
+    elif state.issue_type not in valid_issues:
+        return {
+            "missing_fields": ["valid issue type"],
+            "response": (
+                "Please choose a valid issue type: laptop, VPN, Outlook/email, printer, "
+                "network, or software installation."
+            )
+        }
 
     if not state.reason:
         missing.append("issue description")
 
+    priority = state.priority or "medium"
+
     if missing:
+        chain = prompt | llm
+        result = chain.invoke({
+            "emp_id": state.emp_id,
+            "issue_type": state.issue_type,
+            "priority": priority,
+            "reason": state.reason,
+            "user_input": state.user_input
+        })
+
         return {
             "missing_fields": missing,
-            "response": f"Please provide the missing IT ticket details: {', '.join(missing)}."
+            "priority": priority,
+            "response": result.content
         }
 
-    return {"missing_fields": []}
-
+    return {
+        "missing_fields": [],
+        "priority": priority
+    }
 
 def raise_it_ticket_node(state: AgentState) -> dict:
+    if not state.emp_id:
+        return {"response": "Please provide your employee ID. Example: EMP001"}
+
+    if not state.issue_type:
+        return {"response": "Please tell me the issue type, like laptop, VPN, printer, network, Outlook, or software installation."}
+
+    if not state.reason:
+        return {"response": "Please briefly describe the issue."}
+
     result = raise_it_ticket_tool.invoke({
-        "employee_name": state.emp_id or state.name,
+        "emp_id": state.emp_id,
         "issue_type": state.issue_type,
-        "priority": state.priority,
+        "priority": state.priority or "medium",
         "reason": state.reason,
     })
 
     return {"response": result["message"]}
 
-
 def view_it_tickets_node(state: AgentState) -> dict:
-    result = view_it_tickets_with_role(state.emp_id or state.name, state.role)
+    if state.role not in ["it", "admin"] and not state.emp_id:
+        return {
+            "response": "Please provide your employee ID to view your IT tickets. Example: EMP001"
+        }
+
+    result = view_it_tickets_with_role(
+        state.emp_id or "",
+        state.role
+    )
+
     tickets = result["tickets"]
 
     if not tickets:
@@ -774,7 +1035,7 @@ def view_it_tickets_node(state: AgentState) -> dict:
 
     for item in tickets:
         lines.append(
-            f"ID: {item['id']} | Employee: {item['employee_name']} | "
+            f"ID: {item['id']} | Employee: {item['employee_name']} ({item['emp_id']}) | "
             f"Issue: {item['issue_type']} | Priority: {item['priority']} | "
             f"Status: {item['status']} | Engineer: {item['assigned_engineer']}"
         )
@@ -783,31 +1044,51 @@ def view_it_tickets_node(state: AgentState) -> dict:
 
 
 def it_ticket_status_node(state: AgentState) -> dict:
-    if not state.request_id:
-        return {"response": "Please provide the IT ticket ID."}
+    # Employee: ask EMP ID first
+    if state.role not in ["it", "admin"] and not state.emp_id:
+        return {"response": "Please provide your employee ID to view your IT ticket status. Example: EMP001"}
 
-    result = check_it_ticket_status_with_role(
-        ticket_id=state.request_id,
-        employee_name=state.emp_id or state.name,
-        role=state.role
-    )
-
-    if not result["success"]:
-        return {"response": result["message"]}
-
-    ticket = result["ticket"]
-
-    return {
-        "response": (
-            f"IT Ticket Status:\n"
-            f"Ticket ID: {ticket['id']}\n"
-            f"Employee: {ticket['employee_name']}\n"
-            f"Issue: {ticket['issue_type']}\n"
-            f"Priority: {ticket['priority']}\n"
-            f"Status: {ticket['status']}\n"
-            f"Assigned Engineer: {ticket['assigned_engineer']}"
+    # If ticket ID is given, show that ticket
+    if state.request_id:
+        result = check_it_ticket_status_with_role(
+            ticket_id=state.request_id,
+            emp_id=state.emp_id or "",
+            role=state.role
         )
-    }
+
+        if not result["success"]:
+            return {"response": result["message"]}
+
+        ticket = result["ticket"]
+        return {
+            "response": (
+                f"IT Ticket Status:\n"
+                f"Ticket ID: {ticket['id']}\n"
+                f"Employee: {ticket['employee_name']} ({ticket['emp_id']})\n"
+                f"Issue: {ticket['issue_type']}\n"
+                f"Priority: {ticket['priority']}\n"
+                f"Status: {ticket['status']}\n"
+                f"Assigned Engineer: {ticket['assigned_engineer']}"
+            )
+        }
+
+    # If no ticket ID, show latest/own tickets
+    result = view_it_tickets_with_role(state.emp_id or "", state.role)
+    tickets = result["tickets"]
+
+    if not tickets:
+        return {"response": "No IT tickets found."}
+
+    lines = ["Your IT Ticket Status:"]
+
+    for item in tickets[:5]:
+        lines.append(
+            f"Ticket ID: {item['id']} | Issue: {item['issue_type']} | "
+            f"Priority: {item['priority']} | Status: {item['status']} | "
+            f"Engineer: {item['assigned_engineer']}"
+        )
+
+    return {"response": "\n".join(lines)}
 
 
 def assign_it_ticket_node(state: AgentState) -> dict:
@@ -860,7 +1141,7 @@ def validate_asset_node(state: AgentState) -> dict:
 
 def request_asset_node(state: AgentState) -> dict:
     result = request_asset_tool.invoke({
-        "employee_name": state.emp_id or state.name,
+        "emp_id": state.emp_id or "",
         "asset_type": state.asset_type,
         "reason": state.reason,
     })
@@ -913,7 +1194,48 @@ def reject_asset_node(state: AgentState) -> dict:
     result = reject_asset_with_role(state.request_id, state.role)
     return {"response": result["message"]}
 
+def add_employee_node(state: AgentState) -> dict:
+    from database import add_employee
 
+    if state.role not in ["hr", "admin"]:
+        return {"response": "Only HR or Admin can add employees."}
+
+    missing = []
+
+    if not state.emp_id:
+        missing.append("employee ID")
+    if not state.new_emp_name:
+        missing.append("employee name")
+    if not state.new_emp_email:
+        missing.append("email")
+    if not state.new_emp_role:
+        state.new_emp_role = "employee"
+
+    if missing:
+        return {"response": f"Please provide: {', '.join(missing)}."}
+
+    result = add_employee(
+        emp_id=state.emp_id,
+        name=state.new_emp_name,
+        email=state.new_emp_email,
+        role=state.new_emp_role
+    )
+
+    return {"response": result["message"]}
+
+
+def delete_employee_node(state: AgentState) -> dict:
+    from database import delete_employee
+
+    if state.role not in ["hr", "admin"]:
+        return {"response": "Only HR or Admin can delete employees."}
+
+    if not state.emp_id:
+        return {"response": "Please provide the employee ID to delete. Example: EMP011"}
+
+    result = delete_employee(state.emp_id)
+
+    return {"response": result["message"]}
 # ---------------- UNKNOWN ----------------
 
 def unknown_node(state: AgentState) -> dict:

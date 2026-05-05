@@ -92,8 +92,9 @@ def reject_leave_with_role(request_id: int, role: str) -> dict:
 # ---------------- IT ----------------
 
 @tool(args_schema=RaiseITTicketInput)
-def raise_it_ticket_tool(employee_name: str, issue_type: str, priority: str, reason: str) -> dict:
-    """Raise an IT support ticket."""
+def raise_it_ticket_tool(emp_id: str, issue_type: str, priority: str, reason: str) -> dict:
+    """Raise an IT support ticket after checking outages, maintenance, and active tickets."""
+
     outage = check_known_outage(issue_type)
     if outage:
         return {
@@ -108,35 +109,46 @@ def raise_it_ticket_tool(employee_name: str, issue_type: str, priority: str, rea
             "message": f"Planned maintenance: {maintenance['description']}"
         }
 
-    duplicate = check_duplicate_ticket(employee_name, issue_type)
+    duplicate = check_duplicate_ticket(emp_id, issue_type)
     if duplicate:
         return {
             "success": False,
-            "message": f"Duplicate ticket exists. ID: {duplicate['id']}"
+            "message": (
+                f"You already have an active IT ticket.\n"
+                f"Ticket ID: {duplicate['id']}\n"
+                f"Issue: {duplicate['issue_type']}\n"
+                f"Status: {duplicate['status']}\n\n"
+                f"Please wait until this ticket is resolved before raising a new one."
+            )
         }
 
-    ticket_id = insert_it_ticket(employee_name, issue_type, priority, reason)
+    ticket_id = insert_it_ticket(emp_id, issue_type, priority, reason)
 
     return {
         "success": True,
         "message": f"IT ticket created. ID: {ticket_id}"
     }
 
+def view_it_tickets_with_role(emp_id: str, role: str) -> dict:
+    return {
+        "success": True,
+        "tickets": get_it_tickets(emp_id, role)
+    }
 
-def view_it_tickets_with_role(employee_name: str, role: str) -> dict:
-    return {"success": True, "tickets": get_it_tickets(employee_name, role)}
 
-
-def check_it_ticket_status_with_role(ticket_id: int, employee_name: str, role: str) -> dict:
-    ticket = get_it_ticket_status(ticket_id, employee_name, role)
+def check_it_ticket_status_with_role(ticket_id: int, emp_id: str, role: str) -> dict:
+    ticket = get_it_ticket_status(ticket_id, emp_id, role)
 
     if not ticket:
         return {
             "success": False,
-            "message": "Ticket not found or access denied"
+            "message": "Ticket not found or access denied."
         }
 
-    return {"success": True, "ticket": ticket}
+    return {
+        "success": True,
+        "ticket": ticket
+    }
 
 
 def assign_it_ticket_with_role(ticket_id: int, engineer_name: str, role: str) -> dict:
@@ -145,7 +157,6 @@ def assign_it_ticket_with_role(ticket_id: int, engineer_name: str, role: str) ->
 
 def resolve_it_ticket_with_role(ticket_id: int, role: str) -> dict:
     return resolve_it_ticket(ticket_id, role)
-
 
 # ---------------- ASSET ----------------
 

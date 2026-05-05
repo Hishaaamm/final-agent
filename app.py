@@ -13,6 +13,12 @@ from database import (
     get_pending_leave_requests,
     approve_leave_request,
     reject_leave_request,
+    get_it_tickets,
+    assign_it_ticket,
+    resolve_it_ticket,
+    get_asset_request_status,
+    approve_asset_request,
+    reject_asset_request
 )
 
 from graph import enterprise_graph
@@ -141,7 +147,55 @@ def dashboard_reject(request_id):
     result = reject_leave_request(int(request_id), "manager")
     return result["message"], dashboard_data()
 
+def it_dashboard_data():
+    tickets = get_it_tickets(emp_id="", role="it")
 
+    if not tickets:
+        return "No IT tickets found."
+
+    text = ""
+
+    for t in tickets:
+        text += (
+            f"Ticket ID: {t['id']}\n"
+            f"Employee: {t['employee_name']} ({t['emp_id']})\n"
+            f"Issue Type: {t['issue_type']}\n"
+            f"Priority: {t['priority']}\n"
+            f"Reason: {t['reason']}\n"
+            f"Status: {t['status']}\n"
+            f"Assigned Engineer: {t['assigned_engineer']}\n"
+            f"{'-' * 45}\n"
+        )
+
+    return text
+
+
+def dashboard_assign_ticket(ticket_id, engineer_name):
+    if ticket_id is None:
+        return "Please enter a ticket ID.", it_dashboard_data()
+
+    if not engineer_name or not engineer_name.strip():
+        return "Please enter engineer name.", it_dashboard_data()
+
+    result = assign_it_ticket(
+        ticket_id=int(ticket_id),
+        engineer_name=engineer_name.strip(),
+        role="it"
+    )
+
+    return result["message"], it_dashboard_data()
+
+
+def dashboard_resolve_ticket(ticket_id):
+    if ticket_id is None:
+        return "Please enter a ticket ID.", it_dashboard_data()
+
+    result = resolve_it_ticket(
+        ticket_id=int(ticket_id),
+        role="it"
+    )
+
+    return result["message"], it_dashboard_data()
 with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
     gr.Markdown("# Enterprise HR + IT Assistant")
     gr.Markdown("HR + IT assistant with RAG, leave management, IT tickets, assets, RBAC, and manager approval dashboard.")
@@ -195,6 +249,53 @@ with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
             inputs=request_id,
             outputs=[result_box, pending_box]
         )
+    with gr.Tab("IT Ticket Dashboard"):
+        gr.Markdown("## IT Ticket Dashboard")
+        gr.Markdown(
+            "View all IT tickets, assign tickets to engineers, and resolve completed tickets."
+        )
 
+        refresh_it_btn = gr.Button("Refresh Tickets")
+
+        it_ticket_box = gr.Textbox(
+            label="All IT Tickets",
+            value=it_dashboard_data,
+            lines=18
+        )
+
+        with gr.Row():
+            ticket_id_input = gr.Number(
+                label="Ticket ID",
+                precision=0
+            )
+
+            engineer_input = gr.Textbox(
+                label="Engineer Name",
+                placeholder="Example: Rahul"
+            )
+
+        with gr.Row():
+            assign_ticket_btn = gr.Button("Assign Ticket")
+            resolve_ticket_btn = gr.Button("Resolve Ticket")
+
+        it_result_box = gr.Textbox(label="Action Result")
+
+        refresh_it_btn.click(
+            fn=it_dashboard_data,
+            inputs=None,
+            outputs=it_ticket_box
+        )
+
+        assign_ticket_btn.click(
+            fn=dashboard_assign_ticket,
+            inputs=[ticket_id_input, engineer_input],
+            outputs=[it_result_box, it_ticket_box]
+        )
+
+        resolve_ticket_btn.click(
+            fn=dashboard_resolve_ticket,
+            inputs=ticket_id_input,
+            outputs=[it_result_box, it_ticket_box]
+        )
 
 app = gr.mount_gradio_app(app, demo, path="/ui")

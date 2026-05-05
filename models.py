@@ -4,7 +4,9 @@ from pydantic import BaseModel, Field
 
 IntentType = Literal[
     "rag",
+    "small_talk",
 
+    # Leave
     "apply_leave",
     "view_leave",
     "leave_summary",
@@ -15,17 +17,26 @@ IntentType = Literal[
     "reject_leave",
     "pending_leaves",
     "employee_details",
-    "small_talk",
+
+    # IT tickets
     "raise_it_ticket",
     "view_it_tickets",
     "it_ticket_status",
     "assign_it_ticket",
     "resolve_it_ticket",
 
+    # Asset requests
     "request_asset",
     "asset_status",
-    "approve_asset",
-    "reject_asset",
+    "manager_approve_asset",
+    "manager_reject_asset",
+    "it_approve_asset",
+    "it_reject_asset",
+    "validate_inventory",
+    "fulfill_asset",
+
+    "add_employee",
+    "delete_employee",
 
     "unknown",
 ]
@@ -43,22 +54,28 @@ class AgentState(BaseModel):
     session_id: str = "default"
     chat_history: List[Dict[str, str]] = Field(default_factory=list)
 
+    # Leave
     date: Optional[str] = None
     reason: Optional[str] = None
     leave_type: Optional[str] = None
     request_id: Optional[int] = None
 
+    # IT ticket
     issue_type: Optional[str] = None
     priority: Optional[str] = None
-    asset_type: Optional[str] = None
     engineer_name: Optional[str] = None
 
-    missing_fields: List[str] = Field(default_factory=list)
+    # Asset
+    asset_type: Optional[str] = None
 
+    missing_fields: List[str] = Field(default_factory=list)
+    new_emp_name: Optional[str] = None
+    new_emp_email: Optional[str] = None
+    new_emp_role: Optional[str] = None
 
 class ChatRequest(BaseModel):
     message: str
-    emp_id: str = "EMP001"
+    emp_id: Optional[str] = None
     name: str = "Employee"
     role: str = "employee"
     chat_history: List[Dict[str, str]] = Field(default_factory=list)
@@ -72,22 +89,29 @@ class ChatResponse(BaseModel):
 class RouterOutput(BaseModel):
     intent: IntentType
 
+
 class LeaveTypeValidation(BaseModel):
     is_valid: bool
     suggested_leave_type: Optional[str] = None
     explanation: str
 
+
 class DetailExtraction(BaseModel):
     emp_id: Optional[str] = None
+
+    # Leave
     date: Optional[str] = None
     reason: Optional[str] = None
     leave_type: Optional[str] = None
     request_id: Optional[int] = None
 
+    # IT ticket
     issue_type: Optional[str] = None
     priority: Optional[str] = None
-    asset_type: Optional[str] = None
     engineer_name: Optional[str] = None
+
+    # Asset
+    asset_type: Optional[str] = None
 
 
 class ApplyLeaveInput(BaseModel):
@@ -100,18 +124,19 @@ class ApplyLeaveInput(BaseModel):
 class EmployeeIdInput(BaseModel):
     emp_id: str
 
+
 class RequestIdInput(BaseModel):
     request_id: int
 
 
 class RaiseITTicketInput(BaseModel):
-    employee_name: str
+    emp_id: str
     issue_type: str
-    priority: str
+    priority: str = "medium"
     reason: str
 
 
 class AssetRequestInput(BaseModel):
-    employee_name: str
+    emp_id: str
     asset_type: str
     reason: str
