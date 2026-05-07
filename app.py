@@ -1,6 +1,7 @@
 from urllib import response
 
 from dotenv import load_dotenv
+load_dotenv()
 import gradio as gr
 
 from fastapi import FastAPI, WebSocket
@@ -25,7 +26,7 @@ from graph import enterprise_graph
 from models import ChatRequest, ChatResponse
 
 
-load_dotenv()
+
 create_tables()
 
 app = FastAPI(title="Enterprise HR + IT Assistant")

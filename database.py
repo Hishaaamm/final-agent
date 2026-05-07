@@ -1,6 +1,6 @@
 import sqlite3
 from typing import List, Dict, Optional
-
+from power_automate import send_leave_email
 DB_NAME = "enterprise_assistant.db"
 
 
@@ -358,7 +358,7 @@ def approve_leave_request(request_id: int, role: str) -> Dict:
     if role not in ["manager", "admin"]:
         return {
             "success": False,
-            "message": "Only Manager, HR, or Admin can approve leave requests."
+            "message": "Only Manager or Admin can approve leave requests."
         }
 
     conn = get_connection()
@@ -398,11 +398,42 @@ def approve_leave_request(request_id: int, role: str) -> Dict:
         WHERE emp_id = ?
         """, (emp_id,))
 
+    # Get employee email details before closing DB
+    cursor.execute("""
+    SELECT e.email, e.name, l.emp_id, l.leave_type, l.date, l.reason
+    FROM leave_requests l
+    JOIN employees e ON l.emp_id = e.emp_id
+    WHERE l.id = ?
+    """, (request_id,))
+
+    email_row = cursor.fetchone()
+
     conn.commit()
     conn.close()
 
-    return {"success": True, "message": f"Leave request {request_id} approved successfully."}
+    # Send approval email
+    if email_row:
+        try:
+            from power_automate import send_leave_email
 
+            send_leave_email({
+                "event_type": "leave_approved",
+                "employee_email": email_row["email"],
+                "employee_name": email_row["name"],
+                "emp_id": email_row["emp_id"],
+                "leave_type": email_row["leave_type"],
+                "date": email_row["date"],
+                "reason": email_row["reason"],
+                "status": "approved",
+                "request_id": request_id
+            })
+        except Exception as e:
+            print("Approval email error:", e)
+
+    return {
+        "success": True,
+        "message": f"Leave request {request_id} approved successfully."
+    }
 
 def reject_leave_request(request_id: int, role: str) -> Dict:
     if role not in ["manager", "admin"]:
@@ -423,6 +454,27 @@ def reject_leave_request(request_id: int, role: str) -> Dict:
     updated = cursor.rowcount > 0
 
     conn.commit()
+    cursor.execute("""
+    SELECT e.email, e.name, l.emp_id, l.leave_type, l.date, l.reason
+    FROM leave_requests l
+    JOIN employees e ON l.emp_id = e.emp_id
+    WHERE l.id = ?
+    """, (request_id,))
+
+    email_row = cursor.fetchone()
+
+    if email_row:
+        send_leave_email({
+            "event_type": "leave_rejected",
+            "employee_email": email_row["email"],
+            "employee_name": email_row["name"],
+            "emp_id": email_row["emp_id"],
+            "leave_type": email_row["leave_type"],
+            "date": email_row["date"],
+            "reason": email_row["reason"],
+            "status": "rejected",
+            "request_id": request_id
+        })
     conn.close()
 
     if updated:

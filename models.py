@@ -41,6 +41,7 @@ IntentType = Literal[
     "unknown",
 ]
 
+#main memory/state object passed inside LangGraph.pydantic model
 
 class AgentState(BaseModel):
     user_input: str
@@ -73,6 +74,8 @@ class AgentState(BaseModel):
     new_emp_email: Optional[str] = None
     new_emp_role: Optional[str] = None
 
+#defines what frontend sends to backend
+
 class ChatRequest(BaseModel):
     message: str
     emp_id: Optional[str] = None
@@ -80,6 +83,7 @@ class ChatRequest(BaseModel):
     role: str = "employee"
     chat_history: List[Dict[str, str]] = Field(default_factory=list)
 
+#response from the backend
 
 class ChatResponse(BaseModel):
     intent: str
@@ -95,6 +99,7 @@ class LeaveTypeValidation(BaseModel):
     suggested_leave_type: Optional[str] = None
     explanation: str
 
+#Extraction
 
 class DetailExtraction(BaseModel):
     emp_id: Optional[str] = None
@@ -113,6 +118,7 @@ class DetailExtraction(BaseModel):
     # Asset
     asset_type: Optional[str] = None
 
+#tool input models
 
 class ApplyLeaveInput(BaseModel):
     emp_id: str

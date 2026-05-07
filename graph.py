@@ -37,7 +37,14 @@ from nodes import (
     unknown_node,
 )
 
+from langsmith import traceable
 
+
+def traced_node(name, func):
+    @traceable(name=name)
+    def wrapper(state):
+        return func(state)
+    return wrapper
 # ---------------- ROUTING ----------------
 
 def route_after_router(state: AgentState):
@@ -126,51 +133,55 @@ def route_after_asset_validation(state: AgentState):
     return "request_asset" if not state.missing_fields else "end"
 
 
-# ---------------- BUILD GRAPH ----------------
+#BUILD GRAPH - performs operation
 
 workflow = StateGraph(AgentState)
 
 # Nodes
-workflow.add_node("router", router_node)
-workflow.add_node("extract_details", extract_details_node)
-workflow.add_node("rag", rag_node)
+# Nodes - all wrapped with LangSmith tracing
+nodes = {
+    "router": router_node,
+    "extract_details": extract_details_node,
+    "rag": rag_node,
 
-workflow.add_node("small_talk", small_talk_node)
-workflow.add_node("employee_details", employee_details_node)
+    "small_talk": small_talk_node,
+    "employee_details": employee_details_node,
 
-workflow.add_node("validate_leave", validate_leave_node)
-workflow.add_node("apply_leave", apply_leave_node)
-workflow.add_node("view_leave", view_leave_node)
-workflow.add_node("cancel_leave", cancel_leave_node)
-workflow.add_node("leave_status", leave_status_node)
-workflow.add_node("leave_balance", leave_balance_node)
-workflow.add_node("pending_leaves", pending_leave_node)
-workflow.add_node("approve_leave", approve_leave_node)
-workflow.add_node("reject_leave", reject_leave_node)
-workflow.add_node("add_employee", add_employee_node)
-workflow.add_node("delete_employee", delete_employee_node)
+    "validate_leave": validate_leave_node,
+    "apply_leave": apply_leave_node,
+    "view_leave": view_leave_node,
+    "cancel_leave": cancel_leave_node,
+    "leave_status": leave_status_node,
+    "leave_balance": leave_balance_node,
+    "pending_leaves": pending_leave_node,
+    "approve_leave": approve_leave_node,
+    "reject_leave": reject_leave_node,
+    "add_employee": add_employee_node,
+    "delete_employee": delete_employee_node,
 
-workflow.add_node("validate_it_ticket", validate_it_ticket_node)
-workflow.add_node("raise_it_ticket", raise_it_ticket_node)
-workflow.add_node("view_it_tickets", view_it_tickets_node)
-workflow.add_node("it_ticket_status", it_ticket_status_node)
-workflow.add_node("assign_it_ticket", assign_it_ticket_node)
-workflow.add_node("resolve_it_ticket", resolve_it_ticket_node)
+    "validate_it_ticket": validate_it_ticket_node,
+    "raise_it_ticket": raise_it_ticket_node,
+    "view_it_tickets": view_it_tickets_node,
+    "it_ticket_status": it_ticket_status_node,
+    "assign_it_ticket": assign_it_ticket_node,
+    "resolve_it_ticket": resolve_it_ticket_node,
 
-workflow.add_node("validate_asset", validate_asset_node)
-workflow.add_node("request_asset", request_asset_node)
-workflow.add_node("asset_status", asset_status_node)
-workflow.add_node("approve_asset", approve_asset_node)
-workflow.add_node("reject_asset", reject_asset_node)
+    "validate_asset": validate_asset_node,
+    "request_asset": request_asset_node,
+    "asset_status": asset_status_node,
+    "approve_asset": approve_asset_node,
+    "reject_asset": reject_asset_node,
 
+    "unknown": unknown_node,
+}
 
-
-workflow.add_node("unknown", unknown_node)
+for name, func in nodes.items():
+    workflow.add_node(name, traced_node(name, func))
 
 # Entry
 workflow.set_entry_point("router")
 
-# Router edges
+# Router that routes to correct node
 workflow.add_conditional_edges(
     "router",
     route_after_router,
@@ -204,7 +215,7 @@ workflow.add_conditional_edges(
         "employee_details": "employee_details",
         "add_employee": "add_employee",
         "delete_employee": "delete_employee",
-        
+
         "validate_it_ticket": "validate_it_ticket",
         "it_ticket_status": "it_ticket_status",
         "view_it_tickets": "view_it_tickets",
