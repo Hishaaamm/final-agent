@@ -25,6 +25,7 @@ from database import (
 
     check_inventory,
     insert_asset_request,
+    check_active_asset_request,
     get_asset_request_status,
 
     approve_leave_request,
@@ -161,8 +162,23 @@ def resolve_it_ticket_with_role(ticket_id: int, role: str) -> dict:
 # ---------------- ASSET ----------------
 
 @tool(args_schema=AssetRequestInput)
-def request_asset_tool(employee_name: str, asset_type: str, reason: str) -> dict:
-    """Request an IT asset after checking inventory."""
+def request_asset_tool(emp_id: str, asset_type: str, reason: str) -> dict:
+    """Request an IT asset after checking active asset requests and inventory."""
+
+    active_request = check_active_asset_request(emp_id)
+
+    if active_request:
+        return {
+            "success": False,
+            "message": (
+                f"You already have an active asset request.\n"
+                f"Request ID: {active_request['id']}\n"
+                f"Asset: {active_request['asset_type']}\n"
+                f"Status: {active_request['status']}\n\n"
+                f"You can raise a new asset request only after the previous request is approved, rejected, or fulfilled."
+            )
+        }
+
     inventory = check_inventory(asset_type)
 
     if not inventory:
@@ -171,7 +187,7 @@ def request_asset_tool(employee_name: str, asset_type: str, reason: str) -> dict
     if inventory["available_quantity"] <= 0:
         return {"success": False, "message": "Out of stock"}
 
-    request_id = insert_asset_request(employee_name, asset_type, reason)
+    request_id = insert_asset_request(emp_id, asset_type, reason)
 
     return {
         "success": True,

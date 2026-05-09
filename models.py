@@ -28,6 +28,10 @@ IntentType = Literal[
     # Asset requests
     "request_asset",
     "asset_status",
+    "approve_asset",
+    "reject_asset",
+
+    
     "manager_approve_asset",
     "manager_reject_asset",
     "it_approve_asset",
@@ -65,7 +69,7 @@ class AgentState(BaseModel):
     issue_type: Optional[str] = None
     priority: Optional[str] = None
     engineer_name: Optional[str] = None
-
+    visible_ticket_ids: List[int] = Field(default_factory=list)
     # Asset
     asset_type: Optional[str] = None
 
@@ -117,6 +121,12 @@ class DetailExtraction(BaseModel):
 
     # Asset
     asset_type: Optional[str] = None
+
+    new_emp_name: Optional[str] = None
+    new_emp_email: Optional[str] = None
+    new_emp_role: Optional[str] = None
+    new_emp_id: Optional[str] = None
+    new_emp_manager: Optional[str] = None
 
 #tool input models
 

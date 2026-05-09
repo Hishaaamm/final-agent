@@ -80,27 +80,210 @@ def active_leave_history_to_text(chat_history):
 
 def router_node(state: AgentState) -> dict:
     current_text = state.user_input.strip().lower()
+
+    blocked_topics = [
+        "recipe",
+        "biryani",
+        "cake",
+        "cook",
+        "cooking",
+        "food",
+        "movie",
+        "song",
+        "music",
+        "game",
+        "cricket",
+        "football",
+        "netflix",
+        "instagram",
+        "youtube",
+    ] 
+    if any(word in current_text for word in blocked_topics):
+        return {"intent": "unknown"}
+    
     if state.missing_fields:
         return {"intent": state.intent}
     full_history = "\n".join(
         [f"{m.get('role', '')}: {m.get('content', '')}" for m in state.chat_history[-8:]]
     )
     
+        # follow-up detection for unfinished leave flow
+    last_assistant_msg = ""
+
+    for msg in reversed(state.chat_history):
+        if msg.get("role") == "assistant":
+            last_assistant_msg = msg.get("content", "").lower()
+            break
+
+    # ---------- CURRENT MESSAGE PRIORITY ----------
+    # ---------- LEAVE CURRENT MESSAGE PRIORITY ----------
+
+    if any(phrase in current_text for phrase in [
+        "leave history",
+        "leave records",
+        "applied leaves",
+        "show leaves",
+        "view leaves"
+    ]):
+        return {"intent": "view_leave"}
+
+    if any(phrase in current_text for phrase in [
+        "leave balance",
+        "pending balance",
+        "remaining leave",
+        "leaves remaining",
+        "how many leaves"
+    ]):
+        return {"intent": "leave_balance"}
+
+    if any(phrase in current_text for phrase in [
+        "pending leave request",
+        "pending leave requests",
+        "show all leave request",
+        "show all leave requests",
+        "all leave requests",
+        "leave approvals"
+    ]):
+        return {"intent": "pending_leaves"}
+    # ---------- ALL ASSET REQUESTS ----------
+
+    if any(phrase in current_text for phrase in [
+        "show all asset request",
+        "show all asset requests",
+        "show all the asset request",
+        "show all the asset requests",
+        "asset request by employees",
+        "asset requests by employees",
+        "asset request raised by employee",
+        "asset requests raised by employee",
+        "all asset requests",
+        "view all asset requests",
+        "list all asset requests"
+    ]):
+        return {"intent": "asset_status"}
+    if any(phrase in current_text for phrase in [
+        "it ticket status",
+        "status of my it ticket",
+        "check the status of my it ticket",
+        "show my it ticket request status",
+        "ticket request status",
+        "status of ticket"
+    ]):
+        return {"intent": "it_ticket_status"}
+
+    if any(phrase in current_text for phrase in [
+        "show my it tickets",
+        "view my it tickets",
+        "list my it tickets",
+        "my it tickets"
+    ]):
+        return {"intent": "view_it_tickets"}
+    
+    # ---------- ASSET APPROVE / REJECT ----------
+
+    if any(phrase in current_text for phrase in [
+        "approve asset",
+        "approve asset request",
+        "approve request",
+        "approve id",
+        "approve asset id"
+    ]):
+        return {"intent": "approve_asset"}
+
+    if any(phrase in current_text for phrase in [
+        "reject asset",
+        "reject asset request",
+        "reject request",
+        "reject id",
+        "reject asset id"
+    ]):
+        return {"intent": "reject_asset"}
+    # 1. Direct IT ticket detection from current message
+    it_keywords = [
+        "printer",
+        "network",
+        "email",
+        "outlook",
+        "vpn",
+        "laptop",
+        "software installation"
+    ]
+
+    #if "ticket" in current_text or any(word in current_text for word in it_keywords):
+        #return {"intent": "raise_it_ticket"}
+
+    if any(phrase in current_text for phrase in [
+        "asset request status",
+        "asset status",
+        "show my asset request",
+        "show all my asset request",
+        "my asset requests",
+        "view my asset requests",
+        "list my asset requests"
+    ]):
+        return {"intent": "asset_status"}
+    # 2. Direct asset request detection from current message
+    asset_keywords = [
+        "mouse",
+        "keyboard",
+        "monitor",
+        "vpn token",
+        "software license"
+    ]
+
+    #if any(word in current_text for word in asset_keywords):
+        #return {"intent": "request_asset"}
+
+
+    # 3. IT ticket follow-up detection
+    # 3. IT ticket follow-up detection
+    if (
+        "please provide" in last_assistant_msg
+        and (
+            "issue type" in last_assistant_msg
+            or "issue description" in last_assistant_msg
+        )
+    ):
+        return {"intent": "raise_it_ticket"}
+
+
+    # 4. Asset request follow-up detection
+    # 4. Asset request follow-up detection
+    if (
+        "missing asset request details" in last_assistant_msg
+        or "provide asset type" in last_assistant_msg
+        or "provide reason" in last_assistant_msg
+    ):
+        return {"intent": "request_asset"}
+
+
+    # 5. Leave follow-up detection ONLY
+    if (
+        "please provide" in last_assistant_msg
+        and (
+            "leave type" in last_assistant_msg
+            or "sick or casual" in last_assistant_msg
+            or "date" in last_assistant_msg
+            or "reason for your leave" in last_assistant_msg
+        )
+    ):
+        return {"intent": "apply_leave"}
+
+
+    # 6. EMP ID follow-up routing
     if re.search(r"\bEMP\d{3}\b", state.user_input, re.IGNORECASE):
-        last_assistant_msg = ""
 
-        for msg in reversed(state.chat_history):
-            if msg.get("role") == "assistant":
-                last_assistant_msg = msg.get("content", "").lower()
-                break
-
-        if "leave balance" in last_assistant_msg:
+        if "leave balance" in last_assistant_msg or "provide your employee id" in last_assistant_msg:
             return {"intent": "leave_balance"}
 
-        if "leave request status" in last_assistant_msg or "status of my leave" in last_assistant_msg:
+        if (
+            "leave request status" in last_assistant_msg
+            or "status of my leave" in last_assistant_msg
+            or "status" in full_history
+        ):
             return {"intent": "leave_status"}
 
-        if "leave history" in last_assistant_msg:
+        if "leave history" in last_assistant_msg or "history" in full_history:
             return {"intent": "view_leave"}
 
         if "view your it tickets" in last_assistant_msg:
@@ -108,7 +291,44 @@ def router_node(state: AgentState) -> dict:
 
         if "it ticket status" in last_assistant_msg:
             return {"intent": "it_ticket_status"}
+
+        if (
+            "issue" in last_assistant_msg
+            or "ticket" in last_assistant_msg
+        ):
+            return {"intent": "raise_it_ticket"}
+
+        if "asset" in last_assistant_msg:
+            return {"intent": "request_asset"}
+        # ---------- TICKET ID FOLLOW-UP ----------
+
+        if re.search(r"(ticket\s*id\s*\d+|\bid\s+\d+\b|\bticket\s+\d+\b)", current_text):
+            if "provide the ticket id to resolve" in last_assistant_msg:
+                return {"intent": "resolve_it_ticket"}
+
+            if "provide the ticket id" in last_assistant_msg or "assign" in full_history.lower():
+                return {"intent": "assign_it_ticket"}
             
+    blocked_topics = [
+        "recipe",
+        "biryani",
+        "cake",
+        "cook",
+        "cooking",
+        "food",
+        "movie",
+        "song",
+        "music",
+        "game",
+        "cricket",
+        "football",
+        "netflix",
+        "instagram",
+        "youtube",
+    ] 
+    if any(word in current_text for word in blocked_topics):
+        return {"intent": "unknown"}
+    
     prompt = ChatPromptTemplate.from_template("""
 You are the intent router for an Enterprise HR + IT Assistant.
 
@@ -201,14 +421,76 @@ Examples:
 - explain leave policy
 - what is WFH policy?
 
-IMPORTANT:
-keyboard, mouse, monitor, vpn token, software license are asset requests, not IT support tickets.
+10. ASSET REQUEST EXAMPLES:
 
-If user says "I need keyboard" classify as request_asset.
-If user says "keyboard not working" classify as raise_it_ticket only if they report a problem.
+User: "I need mouse"
+Intent: request_asset
 
-10. IT tickets:
+User: "Need a new laptop"
+Intent: request_asset
 
+User: "My keyboard is broken"
+Intent: request_asset
+
+User: "I need VPN token"
+Intent: request_asset
+
+User: "Request software license"
+Intent: request_asset
+
+Asset:
+asset_status:
+Use this when user asks to check/show/view/list asset request status or previous asset requests.
+Examples:
+- show all my asset request status
+- show my asset requests
+- asset request status
+- status of asset request 2
+- view my asset requests
+
+request_asset:
+Use this only when user wants a NEW asset.
+Examples:
+- I want a mouse
+- I need keyboard
+- request laptop
+- my mouse is not working
+
+11. IT tickets:
+VERY IMPORTANT ROUTING PRIORITY:
+
+If user asks to show, view, list, fetch, or display existing records, it is NOT a create/request action.
+
+Leave records:
+If user asks to show/view/list all leave requests, employee leave requests, pending leave requests, or leave requests by employee:
+intent = pending_leaves
+
+Examples:
+- show all leave request by employee
+- show all leave requests
+- list employee leave requests
+- show pending leave approvals
+
+IT records:
+If user asks to show/view/list all IT tickets, IT ticket requests, ticket requests by employee, or all employee tickets:
+intent = view_it_tickets
+
+Examples:
+- show all it ticket request by employee
+- show all IT tickets
+- list ticket requests
+- view employee IT tickets
+
+Do NOT classify these as raise_it_ticket.
+raise_it_ticket is only for creating/logging/reporting a new issue.
+
+Asset records:
+If user asks status of asset request:
+intent = asset_status
+
+If user asks for a new asset like laptop, monitor, keyboard, mouse, VPN token, software license:
+intent = request_asset
+                                              
 raise_it_ticket:
 Use this intent when the user wants to raise/create/open/log a support ticket OR reports a problem.
 
@@ -251,17 +533,17 @@ Use assign_it_ticket when IT/Admin assigns ticket to engineer.
 resolve_it_ticket:
 Use resolve_it_ticket when IT/Admin resolves/closes ticket.
                                               
-11. Asset:
+12. Asset:
 request_asset: request laptop/monitor/keyboard/mouse/vpn token/software license
 asset_status: asset request status
 approve_asset: approve asset request
 reject_asset: reject asset request
 
-12. small_talk:
+13. small_talk:
 Greetings or casual messages.
 Examples: hi, hello, thanks, okay, bye, yey
 
-13.Employee management:
+14.Employee management:
 add_employee: HR/Admin adds a new employee.
 Examples:
 - add new employee
@@ -272,7 +554,7 @@ Examples:
 - delete employee EMP011
 - remove employee EMP005
 
-14 unknown:
+15. unknown:
 Anything outside HR/IT/asset/policy.
 
 Recent conversation:
@@ -302,28 +584,27 @@ Your job is ONLY to extract values. Do not answer the user.
 
 GENERAL RULES:
 - Current user message has highest priority.
-- Use recent conversation ONLY when the current task is unfinished.
+- Use recent conversation only when the current task is unfinished.
 - If the user corrects a previous value, use the latest correction.
 - Do not reuse details from completed tasks.
 - If recent conversation contains LEAVE_FLOW_COMPLETED, ignore leave details before that marker.
-- Return null only when the value is not available in current message or unfinished recent conversation.
+- Return null only when the value is not available in the current message or unfinished recent conversation.
+- Do not invent missing values.
 
 LEAVE RULES:
 - Extract emp_id, leave_type, date, reason.
 - emp_id must look like EMP001, EMP002, EMP003, etc.
 - leave_type must be sick, casual, or null.
-- date should be extracted in YYYY-MM-DD format when present.
-- reason should be the actual reason text.
+- date must be in YYYY-MM-DD format when present.
+- reason should be the actual reason text, without extra words like "because of" or "due to".
 - If current message only provides emp_id, keep leave_type/date/reason from recent unfinished leave conversation.
 - If current message only provides leave_type/date/reason, keep emp_id from recent unfinished leave conversation.
-- If user gives all details in one message, extract all details.
-- If any detail is missing, return null for only that missing field.
-- Do not invent missing values.
-- Do not clear previous unfinished values unless user starts a completely new leave request.
+- If user gives all leave details in one message, extract all details.
+- If any detail is missing, return null only for that missing field.
 
 LEAVE TYPE VALIDATION:
 - Sick leave is for medical reasons: fever, headache, illness, doctor visit, hospital, injury, recovery.
-- Casual leave is for non-medical reasons: family function, marriage, travel, personal work, ceremony, event.
+- Casual leave is for non-medical reasons: family function, marriage, school function, travel, personal work, ceremony, event.
 - If leave type and reason conflict, set leave_type = null and keep the reason.
 - Handle typos:
   - sixk, sik, sic = sick
@@ -336,14 +617,14 @@ leave_type = sick
 date = 2026-05-07
 reason = fever
 
-Recent: user asked sick leave on 2026-05-07 because fever
+Recent unfinished conversation: user asked sick leave on 2026-05-07 because fever
 Current: "EMP001"
 emp_id = EMP001
 leave_type = sick
 date = 2026-05-07
 reason = fever
 
-Recent: user gave EMP003
+Recent unfinished conversation: user gave EMP003
 Current: "casual leave on 2026-05-10 due to family function"
 emp_id = EMP003
 leave_type = casual
@@ -357,34 +638,61 @@ date = 2026-05-10
 reason = family function
 
 IT RULES:
-- Extract issue_type, priority, reason.
+- Extract emp_id, issue_type, priority, reason.
 - issue_type examples: laptop, vpn, outlook, email, printer, network, software installation.
 - priority must be low, medium, high, urgent, or null.
 - If priority is missing, return null.
 
 ASSET RULES:
-- Extract asset_type.
-- Valid asset_type: laptop, monitor, keyboard, mouse, vpn token, software license.
+- Detect asset requests even if user does not explicitly say "request".
+- Statements like:
+  "I need mouse"
+  "Need keyboard"
+  "My mouse is not functioning"
+  "Laptop issue need replacement"
+  should still be treated as asset requests.
 
-ADMIN RULES and HR RULES:
+- Extract reason naturally from the sentence.
+
+Examples:
+
+User: "I need mouse"
+asset_type = mouse
+reason = null
+
+User: "My mouse is not functioning"
+asset_type = mouse
+reason = mouse is not functioning
+
+User: "Need laptop because current one is damaged"
+asset_type = laptop
+reason = current one is damaged
+
+- If current message only provides reason/details,
+keep asset_type from recent unfinished asset request conversation.
+
+- If current message only provides asset_type,
+keep reason from recent unfinished asset request conversation.
+
+Examples:
+
+Recent unfinished conversation:
+User: "I need mouse"
+
+Current:
+"its not functioning properly"
+
+asset_type = mouse
+reason = its not functioning properly
+                                                                                      
+ADMIN / MANAGER RULES:
 - Extract request_id from messages like approve leave request 1, reject leave 2, ticket 3, asset request 4.
 - Extract engineer_name from messages like assign ticket 1 to Rahul.
 
-EMPLOYEE MANAGEMENT RULES:
-- For add_employee extract emp_id, new_emp_name, new_emp_email, new_emp_role.
-- Role can be employee, hr, manager, it, admin.
-- For delete_employee extract emp_id.
-                                              
 Return exactly:
 emp_id, date, reason, leave_type, request_id, issue_type, priority, asset_type, engineer_name.
 
 Recent unfinished conversation:
-{history}
-
-Current message:
-{user_input}
-
-Recent conversation:
 {history}
 
 Current message:
@@ -394,10 +702,7 @@ Current message:
     chain = prompt | llm.with_structured_output(DetailExtraction)
 
     result = chain.invoke({
-        "history": "\n".join(
-            f"{m['role']}: {m['content']}"
-            for m in state.chat_history[-8:]
-        ),
+        "history": active_leave_history_to_text(state.chat_history),
         "user_input": state.user_input
     })
 
@@ -412,6 +717,9 @@ Current message:
         "priority": result.priority,
         "asset_type": result.asset_type,
         "engineer_name": result.engineer_name,
+        "new_emp_name": result.new_emp_name,
+        "new_emp_email": result.new_emp_email,
+        "new_emp_role": result.new_emp_role,
     }
        # -------- UPDATE ONLY NEW VALUES --------
 
@@ -423,7 +731,7 @@ Current message:
     if emp_match:
         data["emp_id"] = emp_match.group(0).upper()
     else:
-        data["emp_id"] = None
+        data["emp_id"] = state.emp_id
 
     if result.date:
         data["date"] = result.date
@@ -465,7 +773,33 @@ Current message:
         parts = re.split(r"because|due to", text)
         if len(parts) > 1:
             data["reason"] = parts[-1].strip()
+    if state.intent == "add_employee":
+        parts = [p.strip() for p in state.user_input.split(",")]
 
+        if len(parts) >= 3:
+            if re.fullmatch(r"EMP\d{3}", parts[0], re.IGNORECASE):
+                data["emp_id"] = parts[0].upper()
+
+            data["new_emp_name"] = parts[1]
+            data["new_emp_email"] = parts[2]
+
+            if len(parts) >= 4:
+                data["new_emp_role"] = parts[3].lower()
+
+        name_match = re.search(r"employee name is ([a-zA-Z ]+)", state.user_input, re.IGNORECASE)
+        if name_match:
+            data["new_emp_name"] = name_match.group(1).strip().title()
+
+        email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", state.user_input)
+        if email_match:
+            data["new_emp_email"] = email_match.group(0)
+    # -------- ASSET FALLBACK EXTRACTION --------
+    asset_words = ["mouse", "keyboard", "monitor", "laptop", "vpn token", "software license"]
+
+    for asset in asset_words:
+        if asset in text:
+            data["asset_type"] = asset
+            break
     # -------- NORMALIZE --------
     if data["emp_id"]:
         data["emp_id"] = data["emp_id"].upper().strip()
@@ -596,7 +930,7 @@ def validate_leave_node(state: AgentState) -> dict:
     if missing:
         return {
             "missing_fields": missing,
-            "response": f"Please provide: {', '.join(missing)}."
+            "response": make_missing_leave_response(missing)
         }
     from holidays import is_invalid_leave_date
     # Check holiday / weekend
@@ -1016,6 +1350,25 @@ def raise_it_ticket_node(state: AgentState) -> dict:
     return {"response": result["message"]}
 
 def view_it_tickets_node(state: AgentState) -> dict:
+    text = state.user_input.lower()
+    show_pending_only = any(word in text for word in [
+        "pending",
+        "open",
+        "active",
+        "unresolved"
+    ])
+    asks_all = any(phrase in text for phrase in [
+        "all",
+        "by employee",
+        "employee tickets",
+        "ticket requests"
+    ])
+
+    if asks_all and state.role not in ["it", "admin"]:
+        return {
+            "response": "Only IT or Admin can view all IT tickets."
+        }
+
     if state.role not in ["it", "admin"] and not state.emp_id:
         return {
             "response": "Please provide your employee ID to view your IT tickets. Example: EMP001"
@@ -1027,7 +1380,13 @@ def view_it_tickets_node(state: AgentState) -> dict:
     )
 
     tickets = result["tickets"]
-
+    if show_pending_only:
+        tickets = [
+            t for t in tickets
+            if t["status"] in ["open", "in_progress", "pending"]
+        ]
+    visible_ticket_ids = [item["id"] for item in tickets]
+    # Save visible ticket IDs into state memory
     if not tickets:
         return {"response": "No IT tickets found."}
 
@@ -1040,8 +1399,10 @@ def view_it_tickets_node(state: AgentState) -> dict:
             f"Status: {item['status']} | Engineer: {item['assigned_engineer']}"
         )
 
-    return {"response": "\n".join(lines)}
-
+    return {
+        "response": "\n".join(lines),
+        "visible_ticket_ids": visible_ticket_ids
+    }
 
 def it_ticket_status_node(state: AgentState) -> dict:
     # Employee: ask EMP ID first
@@ -1092,20 +1453,49 @@ def it_ticket_status_node(state: AgentState) -> dict:
 
 
 def assign_it_ticket_node(state: AgentState) -> dict:
-    if not state.request_id:
+    import re
+
+    request_id = state.request_id
+    engineer_name = state.engineer_name
+
+    # Auto-pick if only one visible ticket exists
+    if not request_id and len(state.visible_ticket_ids) == 1:
+        request_id = state.visible_ticket_ids[0]
+
+    # Extract ticket ID from current message
+    if not request_id:
+        match = re.search(r"\b\d+\b", state.user_input)
+        if match:
+            request_id = int(match.group(0))
+
+    # Extract engineer name from history/current message
+    if not engineer_name:
+        for msg in reversed(state.chat_history[-6:]):
+            if msg.get("role") == "user":
+                text = msg.get("content", "").lower()
+
+                match = re.search(
+                    r"(?:assign(?:\s+ticket)?(?:\s+\d+)?\s+to\s+)(?:engineer\s+)?([a-zA-Z]+)",
+                    text
+                )
+
+                if match:
+                    engineer_name = match.group(1).title()
+                    break
+
+    if not request_id:
         return {"response": "Please provide the ticket ID."}
 
-    if not state.engineer_name:
+    if not engineer_name:
         return {"response": "Please provide the engineer name."}
 
     result = assign_it_ticket_with_role(
-        ticket_id=state.request_id,
-        engineer_name=state.engineer_name,
+        ticket_id=request_id,
+        engineer_name=engineer_name,
         role=state.role
     )
 
     return {"response": result["message"]}
-
 
 def resolve_it_ticket_node(state: AgentState) -> dict:
     if not state.request_id:
@@ -1123,7 +1513,9 @@ def resolve_it_ticket_node(state: AgentState) -> dict:
 
 def validate_asset_node(state: AgentState) -> dict:
     missing = []
-
+    if not state.emp_id:
+        missing.append("employee ID")
+    
     if not state.asset_type:
         missing.append("asset type")
 
@@ -1140,8 +1532,17 @@ def validate_asset_node(state: AgentState) -> dict:
 
 
 def request_asset_node(state: AgentState) -> dict:
+    if not state.emp_id:
+        return {"response": "Please provide your employee ID. Example: EMP001"}
+
+    if not state.asset_type:
+        return {"response": "Please provide asset type. Example: mouse, keyboard, laptop"}
+
+    if not state.reason:
+        return {"response": "Please provide reason."}
+
     result = request_asset_tool.invoke({
-        "emp_id": state.emp_id or "",
+        "emp_id": state.emp_id,
         "asset_type": state.asset_type,
         "reason": state.reason,
     })
@@ -1150,48 +1551,112 @@ def request_asset_node(state: AgentState) -> dict:
 
 
 def asset_status_node(state: AgentState) -> dict:
-    if not state.request_id:
-        return {"response": "Please provide the asset request ID."}
+    from database import get_asset_requests_by_emp_id
 
-    result = check_asset_status_with_role(
-        request_id=state.request_id,
-        employee_name=state.emp_id or state.name,
-        role=state.role
-    )
+    text = state.user_input.lower()
 
-    if not result["success"]:
-        return {"response": result["message"]}
+    asks_all = any(phrase in text for phrase in [
+        "all asset request",
+        "all asset requests",
+        "asset request raised by employee",
+        "asset requests raised by employee",
+        "raised by employee",
+        "by employee"
+    ])
 
-    asset = result["asset"]
+    if asks_all and state.role not in ["manager", "it", "hr", "admin"]:
+        return {
+            "response": "Only Manager, IT, HR, or Admin can view all asset requests."
+        }
 
-    return {
-        "response": (
-            f"Asset Request Status:\n"
-            f"Request ID: {asset['id']}\n"
-            f"Employee: {asset['employee_name']}\n"
-            f"Asset: {asset['asset_type']}\n"
-            f"Reason: {asset['reason']}\n"
-            f"Status: {asset['status']}\n"
-            f"Manager Approval: {asset['manager_approval']}\n"
-            f"IT Approval: {asset['it_approval']}\n"
-            f"Inventory Status: {asset['inventory_status']}"
+    # If user gives request ID, show one request
+    if state.request_id:
+        result = check_asset_status_with_role(
+            request_id=state.request_id,
+            emp_id=state.emp_id or "",
+            role=state.role
         )
-    }
 
+        if not result["success"]:
+            return {"response": result["message"]}
+
+        asset = result["asset"]
+
+        return {
+            "response": (
+                f"Asset Request Status:\n"
+                f"Request ID: {asset['id']}\n"
+                f"Employee: {asset['employee_name']} ({asset['emp_id']})\n"
+                f"Asset: {asset['asset_type']}\n"
+                f"Reason: {asset['reason']}\n"
+                f"Status: {asset['status']}\n"
+                f"Manager Approval: {asset['manager_approval']}\n"
+                f"IT Approval: {asset['it_approval']}\n"
+                f"Inventory Status: {asset['inventory_status']}"
+            )
+        }
+
+    if asks_all:
+        requests = get_asset_requests_by_emp_id("", state.role)
+    else:
+        if not state.emp_id:
+            return {"response": "Please provide your employee ID to view your asset requests. Example: EMP002"}
+
+        requests = get_asset_requests_by_emp_id(state.emp_id, state.role)
+
+    if not requests:
+        return {"response": "No asset requests found."}
+
+    title = "Asset Requests:" if asks_all else "Your Asset Requests:"
+    lines = [title]
+
+    for item in requests:
+        lines.append(
+            f"ID: {item['id']} | Employee: {item['employee_name']} ({item['emp_id']}) | "
+            f"Asset: {item['asset_type']} | Reason: {item['reason']} | "
+            f"Status: {item['status']} | Manager: {item['manager_approval']} | "
+            f"IT: {item['it_approval']} | Inventory: {item['inventory_status']}"
+        )
+
+    return {"response": "\n".join(lines)}
 
 def approve_asset_node(state: AgentState) -> dict:
-    if not state.request_id:
-        return {"response": "Please provide the asset request ID to approve."}
 
-    result = approve_asset_with_role(state.request_id, state.role)
+    if state.role not in ["manager", "it", "admin"]:
+        return {
+            "response": "Only Manager, IT, or Admin can approve asset requests."
+        }
+
+    if not state.request_id:
+        return {
+            "response": "Please provide the asset request ID to approve."
+        }
+
+    result = approve_asset_with_role(
+        state.request_id,
+        state.role
+    )
+
     return {"response": result["message"]}
 
 
 def reject_asset_node(state: AgentState) -> dict:
-    if not state.request_id:
-        return {"response": "Please provide the asset request ID to reject."}
 
-    result = reject_asset_with_role(state.request_id, state.role)
+    if state.role not in ["manager", "it", "admin"]:
+        return {
+            "response": "Only Manager, IT, or Admin can reject asset requests."
+        }
+
+    if not state.request_id:
+        return {
+            "response": "Please provide the asset request ID to reject."
+        }
+
+    result = reject_asset_with_role(
+        state.request_id,
+        state.role
+    )
+
     return {"response": result["message"]}
 
 def add_employee_node(state: AgentState) -> dict:
@@ -1240,5 +1705,5 @@ def delete_employee_node(state: AgentState) -> dict:
 
 def unknown_node(state: AgentState) -> dict:
     return {
-        "response": "I can help with HR policies, leave management, IT tickets, and asset requests."
+        "response": "Sorry,I can help with HR policies, leave management, IT tickets, and asset requests."
     }

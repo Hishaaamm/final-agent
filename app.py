@@ -1,5 +1,3 @@
-from urllib import response
-
 from dotenv import load_dotenv
 load_dotenv()
 import gradio as gr
@@ -9,8 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import (
     create_tables,
-    save_message,
-    load_memory,
     get_pending_leave_requests,
     approve_leave_request,
     reject_leave_request,
@@ -71,12 +67,11 @@ async def websocket_chat(websocket: WebSocket):
 
         result = enterprise_graph.invoke({
             "user_input": message,
-            "emp_id": "EMP001",
-            "name": "EMP001",
+            "emp_id": None,
+            "name": "Employee",
             "role": "employee",
             "chat_history": chat_history
         })
-
         response = result.get("response", "No response generated.")
 
         chat_history.append({"role": "user", "content": message})
@@ -85,52 +80,173 @@ async def websocket_chat(websocket: WebSocket):
         await websocket.send_text(response)
 
 
-def gradio_chat(message, history, role, emp_id):
-    emp_id = emp_id.upper().strip() if emp_id else None
-    session_id = f"{emp_id}_{role}_session" if emp_id else f"{role}_session"
+def gradio_chat(message, history, role, session_state):
+    import re
 
-    db_history = load_memory(session_id, limit=10)
+    if session_state is None:
+        session_state = {
+            "current_role": role,
+            "emp_id": None,
+            "chat_history": []
+        }
+
+    lower_msg = message.lower()
+
+    emp_match = re.search(r"\bEMP\d{3}\b", message, re.IGNORECASE)
+
+    if emp_match:
+        new_emp = emp_match.group(0).upper()
+
+        if session_state.get("emp_id") and session_state["emp_id"] != new_emp:
+            session_state["chat_history"] = []
+
+        session_state["emp_id"] = new_emp
+
+    user_msgs = [
+        m["content"]
+        for m in session_state["chat_history"]
+        if m["role"] == "user"
+    ]
+
+    if "first question" in lower_msg or "first query" in lower_msg:
+        response = (
+            f"Your first question was: {user_msgs[0]}"
+            if user_msgs
+            else "No previous questions found."
+        )
+
+        session_state["chat_history"].append({
+            "role": "assistant",
+            "content": response
+        })
+
+        return response, session_state
+
+    if "second question" in lower_msg or "second query" in lower_msg:
+        response = (
+            f"Your second question was: {user_msgs[1]}"
+            if len(user_msgs) > 1
+            else "I could not find a second question."
+        )
+
+        session_state["chat_history"].append({
+            "role": "assistant",
+            "content": response
+        })
+
+        return response, session_state
+
+    session_state["chat_history"].append({
+        "role": "user",
+        "content": message
+    })
 
     result = enterprise_graph.invoke({
         "user_input": message,
-        "emp_id": emp_id,
-        "name": emp_id or "User",
+        "emp_id": session_state.get("emp_id"),
+        "name": "Employee",
         "role": role,
-        "chat_history": db_history,
-        "session_id": session_id
+        "chat_history": session_state["chat_history"],
+        "session_id": "gradio_session"
     })
 
     response = result.get("response", "No response generated.")
 
-    save_message(session_id, "user", message)
-    save_message(session_id, "assistant", response)
+    if result.get("emp_id"):
+        session_state["emp_id"] = result.get("emp_id")
 
-    if "leave request submitted" in response.lower():
-        save_message(session_id, "system", "LEAVE_FLOW_COMPLETED")
+    session_state["chat_history"].append({
+        "role": "assistant",
+        "content": response
+    })
 
-    return response
+    session_state["current_role"] = role
 
+    return response, session_state
 
 def dashboard_data():
     requests = get_pending_leave_requests()
 
     if not requests:
-        return "No pending leave requests."
+        return """
+        <div style="
+            padding:20px;
+            border-radius:16px;
+            background:#1f2937;
+            color:white;
+            font-size:16px;
+        ">
+            No pending leave requests.
+        </div>
+        """
 
-    text = ""
+    html = """
+    <div style="
+        display:grid;
+        grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+        gap:18px;
+        margin-top:10px;
+    ">
+    """
 
     for r in requests:
-        text += (
-            f"Request ID: {r['id']}\n"
-            f"Employee: {r['emp_id']} - {r['employee_name']}\n"
-            f"Type: {r['leave_type']}\n"
-            f"Date: {r['date']}\n"
-            f"Reason: {r['reason']}\n"
-            f"Status: {r['status']}\n"
-            f"{'-' * 40}\n"
-        )
+        html += f"""
+        <div style="
+            background:#1f2937;
+            border:1px solid #374151;
+            border-radius:18px;
+            padding:20px;
+            color:white;
+            box-shadow:0 10px 25px rgba(0,0,0,0.25);
+        ">
 
-    return text
+            <div style="
+                display:flex;
+                justify-content:space-between;
+                align-items:center;
+                margin-bottom:14px;
+            ">
+                <span style="
+                    background:#f59e0b;
+                    color:#111827;
+                    padding:5px 12px;
+                    border-radius:999px;
+                    font-size:12px;
+                    font-weight:bold;
+                ">
+                    PENDING
+                </span>
+
+                <span style="
+                    color:#9ca3af;
+                    font-size:13px;
+                ">
+                    Request #{r['id']}
+                </span>
+            </div>
+
+            <h3 style="
+                margin:0;
+                margin-bottom:12px;
+                font-size:22px;
+            ">
+                {r['employee_name']}
+            </h3>
+
+            <div style="color:#d1d5db;line-height:1.9;">
+                <div><b>Employee ID:</b> {r['emp_id']}</div>
+                <div><b>Leave Type:</b> {r['leave_type'].title()}</div>
+                <div><b>Date:</b> {r['date']}</div>
+                <div><b>Reason:</b> {r['reason']}</div>
+                <div><b>Status:</b> {r['status']}</div>
+            </div>
+
+        </div>
+        """
+
+    html += "</div>"
+
+    return html
 
 
 def dashboard_approve(request_id):
@@ -152,23 +268,39 @@ def it_dashboard_data():
     tickets = get_it_tickets(emp_id="", role="it")
 
     if not tickets:
-        return "No IT tickets found."
+        return """
+        <div style="padding:20px;border-radius:16px;background:#1f2937;color:white;">
+            No IT tickets found.
+        </div>
+        """
 
-    text = ""
+    html = """
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;margin-top:10px;">
+    """
 
     for t in tickets:
-        text += (
-            f"Ticket ID: {t['id']}\n"
-            f"Employee: {t['employee_name']} ({t['emp_id']})\n"
-            f"Issue Type: {t['issue_type']}\n"
-            f"Priority: {t['priority']}\n"
-            f"Reason: {t['reason']}\n"
-            f"Status: {t['status']}\n"
-            f"Assigned Engineer: {t['assigned_engineer']}\n"
-            f"{'-' * 45}\n"
-        )
+        html += f"""
+        <div style="background:#1f2937;border:1px solid #374151;border-radius:18px;padding:20px;color:white;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:12px;">
+                <span style="background:#3b82f6;color:white;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:bold;">
+                    {t['status'].upper()}
+                </span>
+                <span style="color:#9ca3af;">Ticket #{t['id']}</span>
+            </div>
 
-    return text
+            <h3 style="margin:0 0 12px 0;">{t['employee_name']} ({t['emp_id']})</h3>
+
+            <div style="color:#d1d5db;line-height:1.8;">
+                <div><b>Issue Type:</b> {t['issue_type']}</div>
+                <div><b>Priority:</b> {t['priority']}</div>
+                <div><b>Reason:</b> {t['reason']}</div>
+                <div><b>Assigned Engineer:</b> {t['assigned_engineer']}</div>
+            </div>
+        </div>
+        """
+
+    html += "</div>"
+    return html
 
 
 def dashboard_assign_ticket(ticket_id, engineer_name):
@@ -197,35 +329,131 @@ def dashboard_resolve_ticket(ticket_id):
     )
 
     return result["message"], it_dashboard_data()
+    
+def switch_role(role, session_state):
+    session_state = {
+        "current_role": role,
+        "emp_id": None,
+        "chat_history": []
+    }
+
+    return [], session_state
+
+
+def chat_submit(message, role, session_state):
+    if not message or not message.strip():
+        return "", [], session_state
+
+    response, session_state = gradio_chat(message, [], role, session_state)
+
+    ui_history = []
+
+    history = session_state["chat_history"]
+
+    for i in range(0, len(history) - 1, 2):
+        if history[i]["role"] == "user" and history[i + 1]["role"] == "assistant":
+            ui_history.append((history[i]["content"], history[i + 1]["content"]))
+
+    return "", ui_history, session_state
+
+def add_user_message(message, role, session_state, chatbot):
+    if not message or not message.strip():
+        return "", chatbot, session_state
+
+    chatbot = chatbot + [(message, None)]
+
+    return "", chatbot, session_state
+
+
+def process_bot_response(chatbot, role, session_state):
+    if not chatbot:
+        return chatbot, session_state
+
+    message = chatbot[-1][0]
+
+    response, session_state = gradio_chat(
+        message,
+        [],
+        role,
+        session_state
+    )
+
+    chatbot[-1] = (message, response)
+
+    return chatbot, session_state
+
 with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
     gr.Markdown("# Enterprise HR + IT Assistant")
     gr.Markdown("HR + IT assistant with RAG, leave management, IT tickets, assets, RBAC, and manager approval dashboard.")
 
     with gr.Tab("Chat Assistant"):
-        gr.ChatInterface(
-            fn=gradio_chat,
-            additional_inputs=[
-                gr.Dropdown(
-                    choices=["employee", "hr", "manager", "it", "admin"],
-                    value="employee",
-                    label="Role"
-                )
-            ],
-            description="Ask HR policy questions, apply leave, raise IT tickets, request assets, and track status."
+
+        session_state = gr.State({
+            "current_role": "employee",
+            "emp_id": None,
+            "chat_history": []
+        })
+
+        role_dropdown = gr.Dropdown(
+            choices=["employee", "human resources", "leave manager", "it manager", "admin"],
+            value="employee",
+            label="Role"
         )
+
+        chatbot = gr.Chatbot(
+            label="Chatbot",
+            height=420
+        )
+
+        msg = gr.Textbox(
+            placeholder="Type your message here...",
+            label="Message"
+        )
+
+        send_btn = gr.Button("Send")
+
+        role_dropdown.change(
+            fn=switch_role,
+            inputs=[role_dropdown, session_state],
+            outputs=[chatbot, session_state]
+        )
+
+        send_btn.click(
+            fn=add_user_message,
+            inputs=[msg, role_dropdown, session_state, chatbot],
+            outputs=[msg, chatbot, session_state],
+            queue=False
+        ).then(
+            fn=process_bot_response,
+            inputs=[chatbot, role_dropdown, session_state],
+            outputs=[chatbot, session_state]
+        )
+
+        msg.submit(
+            fn=add_user_message,
+            inputs=[msg, role_dropdown, session_state, chatbot],
+            outputs=[msg, chatbot, session_state],
+            queue=False
+        ).then(
+            fn=process_bot_response,
+            inputs=[chatbot, role_dropdown, session_state],
+            outputs=[chatbot, session_state]
+        )
+                
 
     with gr.Tab("Manager Leave Dashboard"):
         gr.Markdown("## Pending Leave Requests")
 
         refresh_btn = gr.Button("Refresh Requests")
 
-        pending_box = gr.Textbox(
-            label="Pending Leave Requests",
-            value=dashboard_data,
-            lines=15
+        pending_box = gr.HTML(
+            value=dashboard_data()
         )
 
-        request_id = gr.Number(label="Request ID", precision=0)
+        request_id = gr.Number(
+            label="Request ID",
+            precision=0
+        )
 
         with gr.Row():
             approve_btn = gr.Button("Approve Leave")
@@ -250,6 +478,7 @@ with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
             inputs=request_id,
             outputs=[result_box, pending_box]
         )
+
     with gr.Tab("IT Ticket Dashboard"):
         gr.Markdown("## IT Ticket Dashboard")
         gr.Markdown(
@@ -258,10 +487,8 @@ with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
 
         refresh_it_btn = gr.Button("Refresh Tickets")
 
-        it_ticket_box = gr.Textbox(
-            label="All IT Tickets",
-            value=it_dashboard_data,
-            lines=18
+        it_ticket_box = gr.HTML(
+            value=it_dashboard_data()
         )
 
         with gr.Row():

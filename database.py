@@ -80,6 +80,7 @@ def create_tables():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS asset_requests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        emp_id TEXT NOT NULL,
         employee_name TEXT NOT NULL,
         asset_type TEXT NOT NULL,
         reason TEXT NOT NULL,
@@ -567,7 +568,7 @@ def check_maintenance(issue_type: str) -> Optional[Dict]:
     return dict(row) if row else None
 
 
-def check_duplicate_ticket(emp_id: str, issue_type: str) -> Optional[Dict]:
+def check_duplicate_ticket(emp_id: str, issue_type: str = "") -> Optional[Dict]:
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -578,7 +579,7 @@ def check_duplicate_ticket(emp_id: str, issue_type: str) -> Optional[Dict]:
     AND status IN ('open', 'in_progress')
     ORDER BY id DESC
     LIMIT 1
-    """, (emp_id,))
+    """, (emp_id.upper().strip(),))
 
     row = cursor.fetchone()
     conn.close()
@@ -736,15 +737,22 @@ def check_inventory(asset_type: str) -> Optional[Dict]:
     return dict(row) if row else None
 
 
-def insert_asset_request(employee_name: str, asset_type: str, reason: str) -> int:
+def insert_asset_request(emp_id: str, asset_type: str, reason: str) -> int:
+    emp_id = emp_id.upper().strip()
+
+    employee = get_employee(emp_id)
+
+    if not employee:
+        return None
+
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
     INSERT INTO asset_requests
-    (employee_name, asset_type, reason, status, manager_approval, it_approval, inventory_status)
-    VALUES (?, ?, ?, 'manager_approval_pending', 'pending', 'pending', 'pending')
-    """, (employee_name, asset_type, reason))
+    (emp_id, employee_name, asset_type, reason, status, manager_approval, it_approval, inventory_status)
+    VALUES (?, ?, ?, ?, 'manager_approval_pending', 'pending', 'pending', 'pending')
+    """, (emp_id, employee["name"], asset_type, reason))
 
     request_id = cursor.lastrowid
 
@@ -752,7 +760,6 @@ def insert_asset_request(employee_name: str, asset_type: str, reason: str) -> in
     conn.close()
 
     return request_id
-
 
 def get_asset_request_status(request_id: int, employee_name: str, role: str) -> Optional[Dict]:
     conn = get_connection()
@@ -772,9 +779,31 @@ def get_asset_request_status(request_id: int, employee_name: str, role: str) -> 
 
     return dict(row) if row else None
 
+def check_active_asset_request(emp_id: str) -> Optional[Dict]:
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT * FROM asset_requests
+    WHERE emp_id = ?
+    AND status IN (
+        'manager_approval_pending',
+        'it_approval_pending',
+        'inventory_pending',
+        'pending'
+    )
+    ORDER BY id DESC
+    LIMIT 1
+    """, (emp_id.upper().strip(),))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return dict(row) if row else None
 
 def approve_asset_request(request_id: int, role: str) -> Dict:
-    if role not in ["it", "admin"]:
+    if role not in ["manager","it", "admin"]:
         return {"success": False, "message": "Only IT team or Admin can approve asset requests."}
 
     conn = get_connection()
@@ -823,7 +852,7 @@ def approve_asset_request(request_id: int, role: str) -> Dict:
 
 
 def reject_asset_request(request_id: int, role: str) -> Dict:
-    if role not in ["it", "admin"]:
+    if role not in ["manager","it", "admin"]:
         return {"success": False, "message": "Only IT team or Admin can reject asset requests."}
 
     conn = get_connection()
@@ -847,6 +876,27 @@ def reject_asset_request(request_id: int, role: str) -> Dict:
 
     return {"success": False, "message": "Asset request not found."}
 
+def get_asset_requests_by_emp_id(emp_id: str, role: str) -> List[Dict]:
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    if role in ["manager", "it", "hr", "admin"]:
+        cursor.execute("""
+        SELECT * FROM asset_requests
+        ORDER BY id DESC
+        """)
+    else:
+        cursor.execute("""
+        SELECT * FROM asset_requests
+        WHERE emp_id = ?
+        ORDER BY id DESC
+        """, (emp_id.upper().strip(),))
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
 
 # ---------------- CHAT MEMORY ----------------
 
