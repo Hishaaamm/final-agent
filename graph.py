@@ -45,6 +45,7 @@ def traced_node(name, func):
     def wrapper(state):
         return func(state)
     return wrapper
+
 # ---------------- ROUTING ----------------
 
 def route_after_router(state: AgentState):
@@ -266,6 +267,23 @@ enterprise_graph = workflow.compile()
 
 # ---------------- PRINT GRAPH ----------------
 
+# ---------------- PRINT / SAVE GRAPH ----------------
+
 if __name__ == "__main__":
     graph = enterprise_graph.get_graph()
+
+    # 1. Print ASCII graph in terminal
     print(graph.draw_ascii())
+
+    # 2. Save Mermaid syntax
+    mermaid_code = graph.draw_mermaid()
+    with open("enterprise_langgraph.mmd", "w", encoding="utf-8") as f:
+        f.write(mermaid_code)
+
+    # 3. Save PNG image
+    png_data = graph.draw_mermaid_png()
+    with open("enterprise_langgraph.png", "wb") as f:
+        f.write(png_data)
+
+    print("Graph saved as enterprise_langgraph.png")
+    print("Mermaid saved as enterprise_langgraph.mmd")

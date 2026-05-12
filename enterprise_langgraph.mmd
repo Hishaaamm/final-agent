@@ -1,0 +1,98 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	router(router)
+	extract_details(extract_details)
+	rag(rag)
+	small_talk(small_talk)
+	employee_details(employee_details)
+	validate_leave(validate_leave)
+	apply_leave(apply_leave)
+	view_leave(view_leave)
+	cancel_leave(cancel_leave)
+	leave_status(leave_status)
+	leave_balance(leave_balance)
+	pending_leaves(pending_leaves)
+	approve_leave(approve_leave)
+	reject_leave(reject_leave)
+	add_employee(add_employee)
+	delete_employee(delete_employee)
+	validate_it_ticket(validate_it_ticket)
+	raise_it_ticket(raise_it_ticket)
+	view_it_tickets(view_it_tickets)
+	it_ticket_status(it_ticket_status)
+	assign_it_ticket(assign_it_ticket)
+	resolve_it_ticket(resolve_it_ticket)
+	validate_asset(validate_asset)
+	request_asset(request_asset)
+	asset_status(asset_status)
+	approve_asset(approve_asset)
+	reject_asset(reject_asset)
+	unknown(unknown)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> router;
+	extract_details -.-> add_employee;
+	extract_details -.-> approve_asset;
+	extract_details -.-> approve_leave;
+	extract_details -.-> asset_status;
+	extract_details -.-> assign_it_ticket;
+	extract_details -.-> cancel_leave;
+	extract_details -.-> delete_employee;
+	extract_details -.-> employee_details;
+	extract_details -.-> it_ticket_status;
+	extract_details -.-> leave_balance;
+	extract_details -.-> leave_status;
+	extract_details -.-> reject_asset;
+	extract_details -.-> reject_leave;
+	extract_details -.-> resolve_it_ticket;
+	extract_details -.-> unknown;
+	extract_details -.-> validate_asset;
+	extract_details -.-> validate_it_ticket;
+	extract_details -.-> validate_leave;
+	extract_details -.-> view_it_tickets;
+	extract_details -.-> view_leave;
+	router -.-> employee_details;
+	router -.-> extract_details;
+	router -.-> leave_balance;
+	router -.-> pending_leaves;
+	router -.-> rag;
+	router -.-> small_talk;
+	router -.-> unknown;
+	router -.-> view_it_tickets;
+	router -.-> view_leave;
+	validate_asset -. &nbsp;end&nbsp; .-> __end__;
+	validate_asset -.-> request_asset;
+	validate_it_ticket -. &nbsp;end&nbsp; .-> __end__;
+	validate_it_ticket -.-> raise_it_ticket;
+	validate_leave -. &nbsp;end&nbsp; .-> __end__;
+	validate_leave -.-> apply_leave;
+	add_employee --> __end__;
+	apply_leave --> __end__;
+	approve_asset --> __end__;
+	approve_leave --> __end__;
+	asset_status --> __end__;
+	assign_it_ticket --> __end__;
+	cancel_leave --> __end__;
+	delete_employee --> __end__;
+	employee_details --> __end__;
+	it_ticket_status --> __end__;
+	leave_balance --> __end__;
+	leave_status --> __end__;
+	pending_leaves --> __end__;
+	rag --> __end__;
+	raise_it_ticket --> __end__;
+	reject_asset --> __end__;
+	reject_leave --> __end__;
+	request_asset --> __end__;
+	resolve_it_ticket --> __end__;
+	small_talk --> __end__;
+	unknown --> __end__;
+	view_it_tickets --> __end__;
+	view_leave --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

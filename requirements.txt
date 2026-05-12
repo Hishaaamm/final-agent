@@ -9,6 +9,10 @@ langchain-openai
 langchain-community
 langchain-chroma
 langgraph
+SpeechRecognition
+langsmith
+requests
+graphviz
 
 chromadb
 pypdf

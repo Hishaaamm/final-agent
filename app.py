@@ -1,10 +1,12 @@
 from dotenv import load_dotenv
 load_dotenv()
 import gradio as gr
-
+import json
+import re
+import speech_recognition as sr
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-
+from langchain_openai import ChatOpenAI
 from database import (
     create_tables,
     get_pending_leave_requests,
@@ -13,17 +15,23 @@ from database import (
     get_it_tickets,
     assign_it_ticket,
     resolve_it_ticket,
+    get_activity_logs,
+    save_activity_log,
     get_asset_request_status,
     approve_asset_request,
-    reject_asset_request
+    reject_asset_request,
+
 )
 
 from graph import enterprise_graph
+
+#pydantic models
 from models import ChatRequest, ChatResponse
 
 
 
 create_tables()
+#creates fastapi backend app
 
 app = FastAPI(title="Enterprise HR + IT Assistant")
 
@@ -35,7 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+#request will come here first
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     result = enterprise_graph.invoke({
@@ -54,6 +62,7 @@ def chat(request: ChatRequest):
 
 @app.websocket("/ws")
 async def websocket_chat(websocket: WebSocket):
+    print("✅ WebSocket endpoint was called")
     await websocket.accept()
     await websocket.send_text("Connected to Enterprise Assistant.")
 
@@ -79,10 +88,79 @@ async def websocket_chat(websocket: WebSocket):
 
         await websocket.send_text(response)
 
+def extract_question_index_with_llm(message: str):
+    """
+    Uses LLM to understand which previous question/query/message the user is asking for.
+    """
+
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+    prompt = f"""
+You are a memory index extractor.
+
+Your job is to check whether the user is asking about a previous question/query/message.
+
+Return ONLY valid JSON.
+
+Rules:
+- If user asks for first question/query/message, return {{"index": 0}}
+- If user asks for second question/query/message, return {{"index": 1}}
+- If user asks for third question/query/message, return {{"index": 2}}
+- If user asks for 10th question/query/message, return {{"index": 9}}
+- If user asks for last/latest/previous question/query/message, return {{"index": -1}}
+- If user is not asking about a previous question/query/message, return {{"index": null}}
+
+User message:
+"{message}"
+"""
+
+    try:
+        result = llm.invoke(prompt)
+        content = result.content if hasattr(result, "content") else str(result)
+
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+
+        if not match:
+            return None
+
+        data = json.loads(match.group())
+        return data.get("index")
+
+    except Exception as e:
+        print("LLM index extraction failed:", e)
+        return None
+
+
+def handle_previous_question_request_with_llm(message: str, user_msgs: list):
+    index = extract_question_index_with_llm(message)
+
+    if index is None:
+        return None
+
+    if not user_msgs:
+        return "No previous questions found."
+
+    if index == -1:
+        return f"Your last question was: {user_msgs[-1]}"
+
+    if not isinstance(index, int):
+        return None
+
+    if index < 0:
+        return "Invalid question number."
+
+    if index >= len(user_msgs):
+        return (
+            f"I could not find question number {index + 1}. "
+            f"You have only asked {len(user_msgs)} question(s) so far."
+        )
+
+    return f"Your question number {index + 1} was: {user_msgs[index]}"
 
 def gradio_chat(message, history, role, session_state):
     import re
 
+    # If no session, create fresh session
     if session_state is None:
         session_state = {
             "current_role": role,
@@ -90,57 +168,63 @@ def gradio_chat(message, history, role, session_state):
             "chat_history": []
         }
 
-    lower_msg = message.lower()
+    # Safety: make sure required keys exist
+    session_state.setdefault("chat_history", [])
+    session_state.setdefault("emp_id", None)
+    session_state.setdefault("current_role", role)
 
+    # If role changed, start fresh chat
+    if session_state.get("current_role") != role:
+        session_state["chat_history"] = []
+        session_state["emp_id"] = None
+        session_state["current_role"] = role
+
+    # Search for employee ID pattern like EMP001
     emp_match = re.search(r"\bEMP\d{3}\b", message, re.IGNORECASE)
 
     if emp_match:
         new_emp = emp_match.group(0).upper()
 
+        # If employee changed, clear old chat history
         if session_state.get("emp_id") and session_state["emp_id"] != new_emp:
             session_state["chat_history"] = []
 
         session_state["emp_id"] = new_emp
 
+    # Get only previous user messages
     user_msgs = [
-        m["content"]
-        for m in session_state["chat_history"]
-        if m["role"] == "user"
+        chat["content"]
+        for chat in session_state.get("chat_history", [])
+        if chat.get("role") == "user"
     ]
 
-    if "first question" in lower_msg or "first query" in lower_msg:
-        response = (
-            f"Your first question was: {user_msgs[0]}"
-            if user_msgs
-            else "No previous questions found."
-        )
+    # Check if user is asking about previous question/query/message
+    previous_question_response = handle_previous_question_request_with_llm(
+        message,
+        user_msgs
+    )
+
+    if previous_question_response:
+        # Save user's current memory question also
+        session_state["chat_history"].append({
+            "role": "user",
+            "content": message
+        })
 
         session_state["chat_history"].append({
             "role": "assistant",
-            "content": response
+            "content": previous_question_response
         })
 
-        return response, session_state
+        return previous_question_response, session_state
 
-    if "second question" in lower_msg or "second query" in lower_msg:
-        response = (
-            f"Your second question was: {user_msgs[1]}"
-            if len(user_msgs) > 1
-            else "I could not find a second question."
-        )
-
-        session_state["chat_history"].append({
-            "role": "assistant",
-            "content": response
-        })
-
-        return response, session_state
-
+    # Normal flow: save user message
     session_state["chat_history"].append({
         "role": "user",
         "content": message
     })
 
+    # Send to LangGraph first step
     result = enterprise_graph.invoke({
         "user_input": message,
         "emp_id": session_state.get("emp_id"),
@@ -152,9 +236,11 @@ def gradio_chat(message, history, role, session_state):
 
     response = result.get("response", "No response generated.")
 
+    # Update emp_id if graph extracted one
     if result.get("emp_id"):
         session_state["emp_id"] = result.get("emp_id")
 
+    # Save assistant response
     session_state["chat_history"].append({
         "role": "assistant",
         "content": response
@@ -163,7 +249,6 @@ def gradio_chat(message, history, role, session_state):
     session_state["current_role"] = role
 
     return response, session_state
-
 def dashboard_data():
     requests = get_pending_leave_requests()
 
@@ -188,9 +273,9 @@ def dashboard_data():
         margin-top:10px;
     ">
     """
-
+#fstring f""" inserts Python values into HTML.
     for r in requests:
-        html += f"""
+        html += f""" 
         <div style="
             background:#1f2937;
             border:1px solid #374151;
@@ -339,7 +424,7 @@ def switch_role(role, session_state):
 
     return [], session_state
 
-
+#connects with 
 def chat_submit(message, role, session_state):
     if not message or not message.strip():
         return "", [], session_state
@@ -355,7 +440,7 @@ def chat_submit(message, role, session_state):
             ui_history.append((history[i]["content"], history[i + 1]["content"]))
 
     return "", ui_history, session_state
-
+#shows user message first
 def add_user_message(message, role, session_state, chatbot):
     if not message or not message.strip():
         return "", chatbot, session_state
@@ -366,10 +451,26 @@ def add_user_message(message, role, session_state, chatbot):
 
 
 def process_bot_response(chatbot, role, session_state):
+    import time
+
     if not chatbot:
-        return chatbot, session_state
+        yield chatbot, session_state
+        return
 
     message = chatbot[-1][0]
+
+    chatbot[-1] = (message, "🧠 AI analyzing request...")
+    yield chatbot, session_state
+
+    time.sleep(0.15)
+
+    chatbot[-1] = (message, "🔍 Checking enterprise systems...")
+    yield chatbot, session_state
+
+    time.sleep(0.15)
+
+    chatbot[-1] = (message, "⚡ Agent preparing response...")
+    yield chatbot, session_state
 
     response, session_state = gradio_chat(
         message,
@@ -377,10 +478,131 @@ def process_bot_response(chatbot, role, session_state):
         role,
         session_state
     )
+    save_activity_log(
+        role=role,
+        intent=session_state.get("last_intent", "unknown"),
+        user_message=message,
+        assistant_response=response
+    )
 
     chatbot[-1] = (message, response)
 
-    return chatbot, session_state
+    yield chatbot, session_state
+
+def transcribe_voice(audio_path):
+    if audio_path is None:
+        return ""
+
+    recognizer = sr.Recognizer()
+
+    try:
+        with sr.AudioFile(audio_path) as source:
+            audio_data = recognizer.record(source)
+
+        text = recognizer.recognize_google(audio_data)
+
+        return text
+
+    except Exception as e:
+        return f"Voice recognition failed: {str(e)}"
+    
+def show_ai_workflow():
+    return """
+    <div style="font-family:Arial;padding:20px;background:#111827;color:white;border-radius:18px;">
+        <h2 style="color:#60a5fa;">Enterprise AI Workflow</h2>
+
+        <pre style="
+            background:#1f2937;
+            padding:20px;
+            border-radius:14px;
+            font-size:15px;
+            line-height:1.8;
+            overflow-x:auto;
+        ">
+User Query
+   |
+   v
+Router Agent
+   |
+   +--> Small Talk / Unknown Handler
+   |
+   +--> RBAC Validation
+           |
+           +--> HR Agent
+           |      |
+           |      +--> Leave Apply
+           |      +--> Leave Balance
+           |      +--> Leave Status
+           |      +--> Leave Approval
+           |
+           +--> IT Agent
+           |      |
+           |      +--> Raise Ticket
+           |      +--> Assign Ticket
+           |      +--> Resolve Ticket
+           |
+           +--> Asset Agent
+           |      |
+           |      +--> Request Asset
+           |      +--> Approve / Reject Asset
+           |
+           +--> RAG Agent
+                  |
+                  +--> HR / IT Policy Search
+
+Memory + Logs + Power Automate Emails run across workflows.
+        </pre>
+
+        <h3 style="color:#34d399;">What this shows</h3>
+        <ul style="line-height:1.8;">
+            <li><b>Router Agent:</b> Detects user intent.</li>
+            <li><b>RBAC:</b> Checks if the role is allowed.</li>
+            <li><b>HR Agent:</b> Handles leave and employee workflows.</li>
+            <li><b>IT Agent:</b> Handles tickets and issue resolution.</li>
+            <li><b>Asset Agent:</b> Handles asset requests and approvals.</li>
+            <li><b>RAG Agent:</b> Answers company policy questions.</li>
+            <li><b>Power Automate:</b> Sends email notifications.</li>
+        </ul>
+    </div>
+    """
+
+def format_logs():
+
+    logs = get_activity_logs()
+
+    if not logs:
+        return "<h3>No logs available.</h3>"
+
+    html = """
+    <div style='padding:20px;color:white;'>
+    <h2 style='color:#60a5fa;'>Enterprise Activity Logs</h2>
+    """
+
+    for log in logs:
+
+        html += f"""
+        <div style='
+            background:#1f2937;
+            padding:15px;
+            margin-bottom:15px;
+            border-radius:12px;
+            border-left:4px solid #3b82f6;
+        '>
+
+        <p><b>Time:</b> {log['timestamp']}</p>
+        <p><b>Role:</b> {log['role']}</p>
+        <p><b>Intent:</b> {log['intent']}</p>
+        <p><b>User:</b> {log['user_message']}</p>
+        <p><b>Assistant:</b> {log['assistant_response']}</p>
+
+        </div>
+        """
+
+    html += "</div>"
+
+    return html
+
+#gradio ui
 
 with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
     gr.Markdown("# Enterprise HR + IT Assistant")
@@ -395,7 +617,7 @@ with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
         })
 
         role_dropdown = gr.Dropdown(
-            choices=["employee", "human resources", "leave manager", "it manager", "admin"],
+            choices=["employee", "hr", "manager", "it", "admin"],
             value="employee",
             label="Role"
         )
@@ -409,7 +631,18 @@ with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
             placeholder="Type your message here...",
             label="Message"
         )
+        voice_input = gr.Audio(
+            sources=["microphone"],
+            type="filepath",
+            label="Voice Input"
+        )
 
+        voice_to_text_btn = gr.Button("Convert Voice to Text")
+        voice_to_text_btn.click(
+            fn=transcribe_voice,
+            inputs=voice_input,
+            outputs=msg
+        )
         send_btn = gr.Button("Send")
 
         role_dropdown.change(
@@ -439,7 +672,30 @@ with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
             inputs=[chatbot, role_dropdown, session_state],
             outputs=[chatbot, session_state]
         )
-                
+    # with gr.Tab("AI Workflow"):
+    #     gr.Markdown("## LangGraph Workflow Visualization")
+
+    #     workflow_btn = gr.Button("Show AI Workflow")
+
+    #     workflow_box = gr.HTML()
+
+    #     workflow_btn.click(
+    #         fn=show_ai_workflow,
+    #         inputs=None,
+    #         outputs=workflow_box
+    #     )       
+
+    with gr.Tab("Activity Logs"):
+
+        refresh_logs_btn = gr.Button("Refresh Logs")
+
+        logs_output = gr.HTML()
+
+        refresh_logs_btn.click(
+            fn=format_logs,
+            inputs=None,
+            outputs=logs_output
+        )
 
     with gr.Tab("Manager Leave Dashboard"):
         gr.Markdown("## Pending Leave Requests")
@@ -478,7 +734,7 @@ with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
             inputs=request_id,
             outputs=[result_box, pending_box]
         )
-
+#it dashboard
     with gr.Tab("IT Ticket Dashboard"):
         gr.Markdown("## IT Ticket Dashboard")
         gr.Markdown(
@@ -525,5 +781,6 @@ with gr.Blocks(title="Enterprise HR + IT Assistant") as demo:
             inputs=ticket_id_input,
             outputs=[it_result_box, it_ticket_box]
         )
-
+        
+demo.queue()
 app = gr.mount_gradio_app(app, demo, path="/ui")

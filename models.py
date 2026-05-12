@@ -6,7 +6,7 @@ IntentType = Literal[
     "rag",
     "small_talk",
 
-    # Leave
+    
     "apply_leave",
     "view_leave",
     "leave_summary",
@@ -18,14 +18,14 @@ IntentType = Literal[
     "pending_leaves",
     "employee_details",
 
-    # IT tickets
+    
     "raise_it_ticket",
     "view_it_tickets",
     "it_ticket_status",
     "assign_it_ticket",
     "resolve_it_ticket",
 
-    # Asset requests
+    
     "request_asset",
     "asset_status",
     "approve_asset",
@@ -45,7 +45,6 @@ IntentType = Literal[
     "unknown",
 ]
 
-#main memory/state object passed inside LangGraph.pydantic model
 
 class AgentState(BaseModel):
     user_input: str

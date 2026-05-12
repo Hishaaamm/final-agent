@@ -1,6 +1,6 @@
 import sqlite3
 from typing import List, Dict, Optional
-from power_automate import send_leave_email
+from power_automate import send_leave_email, MANAGER_EMAIL
 DB_NAME = "enterprise_assistant.db"
 
 
@@ -107,6 +107,16 @@ def create_tables():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS activity_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        role TEXT,
+        intent TEXT,
+        user_message TEXT,
+        assistant_response TEXT
+    )
+    """)
 
     seed_employees(cursor)
     seed_default_data(cursor)
@@ -117,15 +127,15 @@ def create_tables():
 
 def seed_employees(cursor):
     employees = [
-        ("EMP001", "Rifa","hishammohd313@gmail.com",  "employee", "Manager"),
+        ("EMP001", "Virat","hishammohd313@gmail.com",  "employee", "Manager"),
         ("EMP002", "Hisham", "hishammohd313@gmail.com", "employee", "Manager"),
-        ("EMP003", "Ayesha", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP003", "Rohit", "hishammohd313@gmail.com", "employee", "Manager"),
         ("EMP004", "Rahul", "hishammohd313@gmail.com", "employee", "Manager"),
-        ("EMP005", "Sneha", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP005", "Dhoni", "hishammohd313@gmail.com", "employee", "Manager"),
         ("EMP006", "Faizan", "hishammohd313@gmail.com", "employee", "Manager"),
-        ("EMP007", "Ananya", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP007", "Dev", "hishammohd313@gmail.com", "employee", "Manager"),
         ("EMP008", "Kiran", "hishammohd313@gmail.com", "employee", "Manager"),
-        ("EMP009", "Meera", "hishammohd313@gmail.com", "employee", "Manager"),
+        ("EMP009", "Manoj", "hishammohd313@gmail.com", "employee", "Manager"),
         ("EMP010", "Arjun", "hishammohd313@gmail.com", "employee", "Manager"),
     ]
 
@@ -179,7 +189,7 @@ def get_employee(emp_id: str) -> Optional[Dict]:
     cursor = conn.cursor()
 
     cursor.execute("SELECT * FROM employees WHERE emp_id = ?", (emp_id.upper().strip(),))
-    row = cursor.fetchone()
+    row = cursor.fetchone() #fetch one row
 
     conn.close()
     return dict(row) if row else None
@@ -230,9 +240,9 @@ def insert_leave_request(emp_id: str, leave_type: str, date: str, reason: str) -
 
     conn.commit()
 
-    request_id = cursor.lastrowid   # ✅ NOW it exists
+    request_id = cursor.lastrowid   
 
-    from power_automate import send_leave_email, MANAGER_EMAIL
+    
 
     send_leave_email({
         "event_type": "new_leave_request",
@@ -933,6 +943,7 @@ def load_memory(session_id: str, limit: int = 10) -> List[Dict]:
     messages.reverse()
 
     return messages
+
 def add_employee(emp_id: str, name: str, email: str, role: str = "employee", manager_name: str = "Manager") -> Dict:
     emp_id = emp_id.upper().strip()
 
@@ -983,3 +994,44 @@ def delete_employee(emp_id: str) -> Dict:
     conn.close()
 
     return {"success": True, "message": f"Employee {emp_id} deleted successfully."}
+
+def save_activity_log(
+    role: str,
+    intent: str,
+    user_message: str,
+    assistant_response: str
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    INSERT INTO activity_logs
+    (role, intent, user_message, assistant_response)
+    VALUES (?, ?, ?, ?)
+    """, (
+        role,
+        intent,
+        user_message,
+        assistant_response
+    ))
+
+    conn.commit()
+    conn.close()
+
+def get_activity_logs(limit: int = 50):
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT *
+    FROM activity_logs
+    ORDER BY id DESC
+    LIMIT ?
+    """, (limit,))
+
+    rows = cursor.fetchall()
+
+    conn.close()
+
+    return [dict(row) for row in rows]
