@@ -9,20 +9,19 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 load_dotenv()
 
-
 DATA_DIR = "data"
 CHROMA_DIR = "chroma_db"
 
 embeddings = OpenAIEmbeddings()
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-
 def load_documents() -> List[Document]:
     documents = []
 
     os.makedirs(DATA_DIR, exist_ok=True)
-
+#loops to every file in data folder
     for filename in os.listdir(DATA_DIR):
+
         path = os.path.join(DATA_DIR, filename)
 
         if filename.endswith(".txt"):
@@ -70,26 +69,21 @@ def build_vector_db():
 
     return vector_db
 
-
 def get_vector_db():
     if not os.path.exists(CHROMA_DIR):
         return build_vector_db()
-
     return Chroma(
         persist_directory=CHROMA_DIR,
         embedding_function=embeddings
     )
-
 
 def role_allowed(doc: Document, role: str) -> bool:
     allowed_roles = doc.metadata.get("roles", "employee,hr,admin,it")
     allowed_roles = [r.strip() for r in allowed_roles.split(",")]
     return role in allowed_roles
 
-
 def answer_policy_question(question: str, role: str = "employee", chat_history=None) -> str:
     vector_db = get_vector_db()
-
     if vector_db is None:
         return "No policy documents found. Please add documents inside the data folder."
 
@@ -106,13 +100,11 @@ def answer_policy_question(question: str, role: str = "employee", chat_history=N
             for doc in top_docs
         ]
     )
-
     history_text = ""
     if chat_history:
         history_text = "\n".join(
             [f"{m['role']}: {m['content']}" for m in chat_history[-6:]]
         )
-
     prompt = ChatPromptTemplate.from_template("""
 You are an enterprise HR and IT policy assistant.
 
@@ -132,14 +124,11 @@ Context:
 Question:
 {question}
 """)
-
     chain = prompt | llm
-
     result = chain.invoke({
         "role": role,
         "history": history_text,
         "context": context,
         "question": question
     })
-
     return result.content

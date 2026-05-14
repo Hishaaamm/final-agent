@@ -1,12 +1,7 @@
-from unittest import result
-
 from dotenv import load_dotenv
 import re
 
 load_dotenv()
-
-from datetime import datetime, timedelta
-
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from database import check_duplicate_ticket
@@ -107,7 +102,6 @@ def router_node(state: AgentState) -> dict:
         [f"{m.get('role', '')}: {m.get('content', '')}" for m in state.chat_history[-8:]]
     )
     
-        # follow-up detection for unfinished leave flow
     last_assistant_msg = ""
 
     for msg in reversed(state.chat_history):
@@ -115,7 +109,7 @@ def router_node(state: AgentState) -> dict:
             last_assistant_msg = msg.get("content", "").lower()
             break
 
-    # ---------- CURRENT MESSAGE PRIORITY ----------
+    
     # ---------- LEAVE CURRENT MESSAGE PRIORITY ----------
 
     if any(phrase in current_text for phrase in [
@@ -161,6 +155,7 @@ def router_node(state: AgentState) -> dict:
         "list all asset requests"
     ]):
         return {"intent": "asset_status"}
+    
     if any(phrase in current_text for phrase in [
         "it ticket status",
         "status of my it ticket",
@@ -198,16 +193,7 @@ def router_node(state: AgentState) -> dict:
         "reject asset id"
     ]):
         return {"intent": "reject_asset"}
-    # 1. Direct IT ticket detection from current message
-    it_keywords = [
-        "printer",
-        "network",
-        "email",
-        "outlook",
-        "vpn",
-        "laptop",
-        "software installation"
-    ]
+    
 
     #if "ticket" in current_text or any(word in current_text for word in it_keywords):
         #return {"intent": "raise_it_ticket"}
@@ -223,19 +209,8 @@ def router_node(state: AgentState) -> dict:
     ]):
         return {"intent": "asset_status"}
     # 2. Direct asset request detection from current message
-    asset_keywords = [
-        "mouse",
-        "keyboard",
-        "monitor",
-        "vpn token",
-        "software license"
-    ]
+    
 
-    #if any(word in current_text for word in asset_keywords):
-        #return {"intent": "request_asset"}
-
-
-    # 3. IT ticket follow-up detection
     # 3. IT ticket follow-up detection
     if (
         "please provide" in last_assistant_msg
@@ -246,8 +221,6 @@ def router_node(state: AgentState) -> dict:
     ):
         return {"intent": "raise_it_ticket"}
 
-
-    # 4. Asset request follow-up detection
     # 4. Asset request follow-up detection
     if (
         "missing asset request details" in last_assistant_msg
@@ -300,6 +273,7 @@ def router_node(state: AgentState) -> dict:
 
         if "asset" in last_assistant_msg:
             return {"intent": "request_asset"}
+        
         # ---------- TICKET ID FOLLOW-UP ----------
 
         if re.search(r"(ticket\s*id\s*\d+|\bid\s+\d+\b|\bticket\s+\d+\b)", current_text):
@@ -308,26 +282,6 @@ def router_node(state: AgentState) -> dict:
 
             if "provide the ticket id" in last_assistant_msg or "assign" in full_history.lower():
                 return {"intent": "assign_it_ticket"}
-            
-    blocked_topics = [
-        "recipe",
-        "biryani",
-        "cake",
-        "cook",
-        "cooking",
-        "food",
-        "movie",
-        "song",
-        "music",
-        "game",
-        "cricket",
-        "football",
-        "netflix",
-        "instagram",
-        "youtube",
-    ] 
-    if any(word in current_text for word in blocked_topics):
-        return {"intent": "unknown"}
     
     prompt = ChatPromptTemplate.from_template("""
 You are the intent router for an Enterprise HR + IT Assistant.
@@ -721,11 +675,7 @@ Current message:
         "new_emp_email": result.new_emp_email,
         "new_emp_role": result.new_emp_role,
     }
-       # -------- UPDATE ONLY NEW VALUES --------
-
-    # IMPORTANT:
-    # Do NOT take emp_id from LLM result because it may come from old chat history.
-    # emp_id must come only from the CURRENT user message.
+       
     emp_match = re.search(r"\bEMP\d{3}\b", state.user_input, re.IGNORECASE)
 
     if emp_match:
@@ -733,29 +683,6 @@ Current message:
     else:
         data["emp_id"] = state.emp_id
 
-    if result.date:
-        data["date"] = result.date
-
-    if result.reason:
-        data["reason"] = result.reason
-
-    if result.leave_type:
-        data["leave_type"] = result.leave_type
-
-    if result.request_id:
-        data["request_id"] = result.request_id
-
-    if result.issue_type:
-        data["issue_type"] = result.issue_type
-
-    if result.priority:
-        data["priority"] = result.priority
-
-    if result.asset_type:
-        data["asset_type"] = result.asset_type
-
-    if result.engineer_name:
-        data["engineer_name"] = result.engineer_name
 
     # -------- FALLBACK EXTRACTION --------
     text = state.user_input.lower()
@@ -793,13 +720,14 @@ Current message:
         email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", state.user_input)
         if email_match:
             data["new_emp_email"] = email_match.group(0)
-    # -------- ASSET FALLBACK EXTRACTION --------
+  
     asset_words = ["mouse", "keyboard", "monitor", "laptop", "vpn token", "software license"]
 
     for asset in asset_words:
         if asset in text:
             data["asset_type"] = asset
             break
+
     # -------- NORMALIZE --------
     if data["emp_id"]:
         data["emp_id"] = data["emp_id"].upper().strip()
@@ -819,29 +747,7 @@ Current message:
     return data
 
 # ---------------- RAG ----------------
-def leave_summary_node(state: AgentState) -> dict:
-    from database import get_all_leave_requests
 
-    if state.role not in ["manager", "hr", "admin"]:
-        return {"response": "Only Manager, HR, or Admin can view leave summary."}
-
-    requests = get_all_leave_requests()
-
-    total = len(requests)
-    pending = sum(1 for r in requests if r["status"] == "pending")
-    approved = sum(1 for r in requests if r["status"] == "approved")
-    rejected = sum(1 for r in requests if r["status"] == "rejected")
-
-    return {
-        "response": (
-            f"Team Leave Summary:\n"
-            f"Total Requests: {total}\n"
-            f"Pending: {pending}\n"
-            f"Approved: {approved}\n"
-            f"Rejected: {rejected}\n\n"
-            f"Tip: Ask 'show pending leave requests' to approve or reject."
-        )
-    }
 def rag_node(state: AgentState) -> dict:
     answer = answer_policy_question(
         question=state.user_input,
